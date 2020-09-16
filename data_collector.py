@@ -10,7 +10,9 @@ import logging
 
 import carla
 from carla import ColorConverter as cc
-
+from carla import Transform
+from matplotlib import cm
+import open3d as o3d
 # Note: add PythonAPI and PythonAPI/carla into python path
 
 from examples.synchronous_mode import CarlaSyncMode
@@ -27,6 +29,9 @@ from examples.data_collector.camera_utils import draw_2d_bounding_boxes
 
 CLASSES_TO_LABEL = ["vehicle", "pedestrian"]
 
+
+VIRIDIS = np.array(cm.get_cmap('plasma').colors)
+VID_RANGE = np.linspace(0.0, 1.0, VIRIDIS.shape[0])
 
 class CameraManager(object):
     """
@@ -49,7 +54,7 @@ class CameraManager(object):
                                    'image_size_y': str(args.height)}
         lidar_ray_cast_attributes = {'channels': '64',
                                      'range': str(args.lidar_range),
-                                     'points_per_second': '100000'}
+                                     'points_per_second': '500000'}
         lidar_blickfeld_attributes = {'frame_mode': 'up',
                                       'scanlines': '100',
                                       'horizontal_fov_limit': '90',
@@ -220,6 +225,11 @@ class CarlaGame(object):
 
         self._timer = Timer()
         self.clock = pygame.time.Clock()
+        self.o3d_vis = None
+        self.point_list = None
+        self.lidar_vis_frame = 0
+        if args.vis_lidar:
+            self.setup_visualizer()
 
         self.world = None
         self._extrinsic = None
@@ -252,6 +262,19 @@ class CarlaGame(object):
             destination = self.spawn_points[1].location
 
         self.agent.set_destination(self.agent.vehicle.get_location(), destination, clean=True)
+
+    def setup_visualizer(self):
+        self.o3d_vis = o3d.visualization.Visualizer()
+        self.o3d_vis.create_window(
+            window_name='Carla Lidar',
+            width=960,
+            height=540,
+            left=480,
+            top=270)
+        self.o3d_vis.get_render_option().background_color = [0.05, 0.05, 0.05]
+        self.o3d_vis.get_render_option().point_size = 1
+        self.o3d_vis.get_render_option().show_coordinate_frame = True
+        self.point_list = o3d.geometry.PointCloud()
 
     def current_captured_frame_num(self, args):
         # Figures out which frame number we currently are on
@@ -333,17 +356,39 @@ class CarlaGame(object):
         depth_map = processed_sensor_data['sensor.camera.depth']['depth']
         lidar_raycast_image = processed_sensor_data['sensor.lidar.ray_cast']['image']  # For visualization
         lidar_raycast_points = processed_sensor_data['sensor.lidar.ray_cast']['points']
+        lidar_raycast_intensity = processed_sensor_data['sensor.lidar.ray_cast']['intensity']
 
         # Retrieve and draw datapoints on rgb image
         image, datapoints, bounding_boxes, boxes_2d = self._generate_datapoints(image, depth_map, args)
 
-        # TODO Display lidar point cloud on rgb image
-        if args.vis_lidar:
-            logging.warning("Not implemented yet.")
-
         # Display RGB Image
         surface = pygame.surfarray.make_surface(image.swapaxes(0, 1))
         display.blit(surface, (0, 0))
+
+        # TODO Display lidar point cloud on rgb image
+        if args.vis_lidar:
+            intensity_col = 1.0 - np.log(lidar_raycast_intensity) / np.log(np.exp(-0.004 * 100))
+            int_color = np.c_[
+                np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 0]),
+                np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 1]),
+                np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 2])]
+
+            # We're negating the y to correclty visualize a world that matches
+            # what we see in Unreal since Open3D uses a right-handed coordinate system
+            lidar_raycast_points_o3d = np.copy(lidar_raycast_points)
+            lidar_raycast_points_o3d[:, :1] = -lidar_raycast_points_o3d[:, :1]
+            self.point_list.points = o3d.utility.Vector3dVector(lidar_raycast_points)
+            self.point_list.colors = o3d.utility.Vector3dVector(int_color)
+
+            if self.lidar_vis_frame == 2:
+                self.o3d_vis.add_geometry(self.point_list)
+            self.o3d_vis.update_geometry(self.point_list)
+
+            self.o3d_vis.poll_events()
+            self.o3d_vis.update_renderer()
+            # # This can fix Open3D jittering issues:
+            # time.sleep(0.005)
+            self.lidar_vis_frame += 1
 
         # Display 3D Bounding Boxes
         if args.vis_boxes3d:
@@ -420,6 +465,7 @@ class CarlaGame(object):
                 points = np.frombuffer(sensor_data.raw_data, dtype=np.dtype('f4'))
                 points = np.reshape(points, (int(points.shape[0] / 4), 4))
                 # Removing the intensity from lidar data
+                intensity = points[:, -1]
                 points = points[:, :3]
                 lidar_data = np.array(points[:, :2])
                 lidar_data *= min(self.hud.dim) / (2.0 * lidar_range)
@@ -431,7 +477,7 @@ class CarlaGame(object):
                 lidar_img = np.zeros(lidar_img_size)
                 lidar_img[tuple(lidar_data.T)] = (255, 255, 255)
 
-                processed_data.update({sensor_key: {'image': lidar_img, 'points': points}})
+                processed_data.update({sensor_key: {'image': lidar_img, 'points': points, 'intensity': intensity}})
             else:
                 color_converter = cc.Depth if 'depth' in sensor_key else cc.Raw
                 sensor_data.convert(color_converter)
@@ -615,7 +661,7 @@ def main():
         help='How many frames to render before resetting the environment. For example, the agent may be stuck')
     argparser.add_argument(
         '--lidar_range',
-        default=70.,
+        default=100.,
         type=float,
         help='Max render depth in meters')
     argparser.add_argument(
