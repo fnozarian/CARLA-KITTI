@@ -18,14 +18,12 @@ import open3d as o3d
 from examples.synchronous_mode import CarlaSyncMode
 from examples.automatic_control import World, HUD, KeyboardControl, BehaviorAgent, get_actor_display_name
 from examples.automatic_control import CollisionSensor, LaneInvasionSensor, GnssSensor
-from examples.data_collector.lidar_utils import project_point_cloud
-from examples.data_collector.utils import vector3d_to_array
-from examples.data_collector.bounding_box import create_kitti_datapoint
-from examples.data_collector.utils import Timer
-from examples.data_collector.dataexport import save_ref_files, save_image_data, save_kitti_data, save_lidar_data
-from examples.data_collector.dataexport import save_groundplanes, save_calibration_matrices
 from examples.client_bounding_boxes import ClientSideBoundingBoxes
-from examples.data_collector.camera_utils import draw_2d_bounding_boxes
+from utils import vector3d_to_array, Timer
+from bounding_box import create_kitti_datapoint
+from dataexport import save_ref_files, save_image_data, save_kitti_data, save_lidar_data
+from dataexport import save_groundplanes, save_calibration_matrices
+from camera_utils import draw_2d_bounding_boxes
 
 CLASSES_TO_LABEL = ["vehicle", "pedestrian"]
 
@@ -224,6 +222,7 @@ class CarlaGame(object):
         self.num_min_waypoints = 21
 
         self._timer = Timer()
+        self.reset_episode = True
         self.clock = pygame.time.Clock()
         self.o3d_vis = None
         self.point_list = None
@@ -280,14 +279,15 @@ class CarlaGame(object):
         # Figures out which frame number we currently are on
         # This is run once, when we start the simulator in case we already have a dataset.
         # The user can then choose to overwrite or append to the dataset.
-        label_path = os.path.join(args.output_dir, 'label_2/')
+        label_path = os.path.join(args.phase_dir, 'label_2/')
+        logging.debug('Path to label directory: {}'.format(label_path))
         num_existing_data_files = len(
             [name for name in os.listdir(label_path) if name.endswith('.txt')])
-        print(num_existing_data_files)
+        logging.info("Number of existing data files: {}".format(num_existing_data_files))
         if num_existing_data_files == 0:
             return 0
         answer = input(
-            "There already exists a dataset in {}. Would you like to (O)verwrite or (A)ppend the dataset? (O/A)".format(args.output_dir))
+            "There already exists a dataset in {}. Would you like to (O)verwrite or (A)ppend the dataset? (O/A)".format(args.phase_dir))
         if answer.upper() == "O":
             logging.info(
                 "Resetting frame number to 0 and overwriting existing")
@@ -298,17 +298,18 @@ class CarlaGame(object):
         return num_existing_data_files
 
     def _on_new_episode(self):
-
-        self.agent.reroute(self.spawn_points)
+        logging.info('Starting a new episode...')
 
         self._timer = Timer()
-
+        self.reset_episode = False
         self._is_on_reverse = False
 
         # Reset all tracking variables
         self._agent_location_on_last_capture = None
         self._frames_since_last_capture = 0
         self._captured_frames_since_restart = 0
+
+        self.agent.reroute(self.spawn_points)
 
     def _distance_since_last_recording(self):
         if self._agent_location_on_last_capture is None:
@@ -320,21 +321,16 @@ class CarlaGame(object):
 
         return dist_func(cur_pos, last_pos)
 
-    def _save_datapoints(self, datapoints, args):
+    def _save_datapoints(self, datapoints, rgb_image, lidar_height, args):
         # Determine whether to save files
         distance_driven = self._distance_since_last_recording()
-        # print("Distance driven since last recording: {}".format(distance_driven))
+        logging.debug("Distance driven since last recording: {}".format(distance_driven))
         has_driven_long_enough = distance_driven is None or distance_driven > args.distance_since_last_recording
         if (self._timer.step + 1) % args.steps_between_recordings == 0:
             if has_driven_long_enough and datapoints:
-                # Avoid doing this twice or unnecessarily often
-                if not args.vis_lidar and self.point_cloud is None:
-                    # TODO(farzad) set self.point_cloud
-                    raise NotImplemented
-
                 self._update_agent_location()
                 # Save screen, lidar and kitti training labels together with calibration and groundplane files
-                self._save_training_files(datapoints, self.point_cloud, args)
+                self._save_training_files(datapoints, self.point_cloud, rgb_image, lidar_height, args)
                 self.captured_frame_no += 1
                 self._captured_frames_since_restart += 1
                 self._frames_since_last_capture = 0
@@ -349,14 +345,10 @@ class CarlaGame(object):
                 "Could not save training data - no visible agents of selected classes in scene")
 
     def _render(self, display, sensor_data_dict, args):
-        processed_sensor_data = self._preprocess_sensor_data(sensor_data_dict)
 
-        image = processed_sensor_data['sensor.camera.rgb']['image']
-        image_depth = processed_sensor_data['sensor.camera.depth']['image']  # Gray-scale depth image for visualization
-        depth_map = processed_sensor_data['sensor.camera.depth']['depth']
-        lidar_raycast_image = processed_sensor_data['sensor.lidar.ray_cast']['image']  # For visualization
-        lidar_raycast_points = processed_sensor_data['sensor.lidar.ray_cast']['points']
-        lidar_raycast_intensity = processed_sensor_data['sensor.lidar.ray_cast']['intensity']
+        image = np.copy(sensor_data_dict['sensor.camera.rgb']['image'])
+        image_depth = sensor_data_dict['sensor.camera.depth']['image']  # Gray-scale depth image for visualization
+        depth_map = sensor_data_dict['sensor.camera.depth']['depth']
 
         # Retrieve and draw datapoints on rgb image
         image, datapoints, bounding_boxes, boxes_2d = self._generate_datapoints(image, depth_map, args)
@@ -367,6 +359,9 @@ class CarlaGame(object):
 
         # TODO Display lidar point cloud on rgb image
         if args.vis_lidar:
+            lidar_raycast_image = sensor_data_dict['sensor.lidar.ray_cast']['image']  # For visualization
+            lidar_raycast_points = sensor_data_dict['sensor.lidar.ray_cast']['points']
+            lidar_raycast_intensity = sensor_data_dict['sensor.lidar.ray_cast']['intensity']
             intensity_col = 1.0 - np.log(lidar_raycast_intensity) / np.log(np.exp(-0.004 * 100))
             int_color = np.c_[
                 np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 0]),
@@ -377,7 +372,7 @@ class CarlaGame(object):
             # what we see in Unreal since Open3D uses a right-handed coordinate system
             lidar_raycast_points_o3d = np.copy(lidar_raycast_points)
             lidar_raycast_points_o3d[:, :1] = -lidar_raycast_points_o3d[:, :1]
-            self.point_list.points = o3d.utility.Vector3dVector(lidar_raycast_points)
+            self.point_list.points = o3d.utility.Vector3dVector(lidar_raycast_points_o3d)
             self.point_list.colors = o3d.utility.Vector3dVector(int_color)
 
             if self.lidar_vis_frame == 2:
@@ -402,7 +397,7 @@ class CarlaGame(object):
 
         return datapoints
 
-    def _save_training_files(self, datapoints, rgb_image, point_cloud, args):
+    def _save_training_files(self, datapoints, point_cloud, rgb_image, lidar_height, args):
         logging.info("Attempting to save at timer step {}, frame no: {}".format(
             self._timer.step, self.captured_frame_no))
         groundplane_fname = args.groundplane_path.format(self.captured_frame_no)
@@ -410,13 +405,11 @@ class CarlaGame(object):
         kitti_fname = args.label_path.format(self.captured_frame_no)
         img_fname = args.image_path.format(self.captured_frame_no)
         calib_filename = args.calibration_path.format(self.captured_frame_no)
-        lidar_blickfeld = self.world.camera_manager.sensors['sensor.lidar.blickfeld']['sensor']
-        lidar_height = lidar_blickfeld.get_transform().location.z
         save_groundplanes(groundplane_fname, self.world.player.get_transform(), lidar_height)
-        save_ref_files(args.output_dir, self.captured_frame_no)
+        save_ref_files(args.phase_dir, self.captured_frame_no)
         save_image_data(img_fname, rgb_image)
         save_kitti_data(kitti_fname, datapoints)
-        save_lidar_data(lidar_fname, point_cloud, lidar_height, args.lidar_data_format)
+        save_lidar_data(lidar_fname, point_cloud)
         save_calibration_matrices(calib_filename, self.world.camera_manager.intrinsic, self._extrinsic)
 
     def _update_agent_location(self):
@@ -521,36 +514,44 @@ class CarlaGame(object):
                 for i, key in enumerate(self.world.camera_manager.sensors.keys()):
                     sensors_data_dict.update({key: simulation_data[i+1]})
 
-                # TODO Uncomment and check if this works
                 # Reset the environment if the agent is stuck or can't find any agents or
                 # if we have captured enough frames in this one
-                # is_stuck = self._frames_since_last_capture >= args.num_empty_frames_before_reset
-                # is_enough_datapoints = (self._captured_frames_since_restart + 1) % args.num_recordings_before_reset == 0
-                #
-                # if (is_stuck or is_enough_datapoints) and args.save_data:
-                #     logging.warning("Is stuck: {}, is_enough_datapoints: {}".format(
-                #         is_stuck, is_enough_datapoints))
-                #     self._on_new_episode()
-                #     # If we dont sleep, the client will continue to render
-                #     return True
+                is_stuck = self._frames_since_last_capture >= args.num_empty_frames_before_reset
+                is_enough_datapoints = (self._captured_frames_since_restart + 1) % args.num_recordings_before_reset == 0
+
+                if (is_stuck or is_enough_datapoints) and args.save_data:
+                    if is_stuck:
+                        logging.warning("The agent is either stuck or can't find any agents!")
+                    if is_enough_datapoints:
+                        logging.info("Enough datapoints captured. The episode is going to restart.")
+                    self._on_new_episode()
+                    # If we dont sleep, the client will continue to render
+                    self.reset_episode = True
+                    continue
 
                 self._update_extrinsic_matrix()
+
+                self.agent.update_information(self.world)
 
                 # Tick HUD
                 self.world.tick(self.clock)
 
-                self.agent.update_information(self.world)
+                processed_sensor_data = self._preprocess_sensor_data(sensors_data_dict)
+
+                self.point_cloud = processed_sensor_data['sensor.lidar.ray_cast']['points']
+                rgb_image = processed_sensor_data['sensor.camera.rgb']['image']
+                ray_cast_lidar = self.world.camera_manager.sensors['sensor.lidar.ray_cast']['sensor']
+                lidar_height = ray_cast_lidar.get_transform().location.z
 
                 # Rendering sensor images and creating KITTI datapoints for each frame
                 # TODO makes sense to have on_render only dealing with rendering not datapoint generation.
-                datapoints = self._render(self.display, sensors_data_dict, args)
+                datapoints = self._render(self.display, processed_sensor_data, args)
 
                 # Rendering HUD
                 self.world.render(self.display)
                 pygame.display.flip()
 
-                # TODO save datapoints
-                # self._save_datapoints(datapoints, args)
+                self._save_datapoints(datapoints, rgb_image, lidar_height, args)
 
                 # Set new destination when target has been reached
                 if len(self.agent.get_local_planner().waypoints_queue) < self.num_min_waypoints and args.loop:
@@ -701,20 +702,21 @@ def main():
 
     args = argparser.parse_args()
 
-    output_folder = os.path.join("_out", args.phase)
+    phase_dir = os.path.join(args.output_dir, args.phase)
     folders = ['calib', 'image_2', 'label_2', 'velodyne', 'planes']
 
     """ DATA SAVE PATHS """
-    args.groundplane_path = os.path.join(output_folder, 'planes/{0:06}.txt')
-    args.lidar_path = os.path.join(output_folder, 'velodyne/{0:06}.bin')
-    args.label_path = os.path.join(output_folder, 'label_2/{0:06}.txt')
-    args.image_path = os.path.join(output_folder, 'image_2/{0:06}.png')
-    args.calibration_path = os.path.join(output_folder, 'calib/{0:06}.txt')
+    args.phase_dir = phase_dir
+    args.groundplane_path = os.path.join(phase_dir, 'planes/{0:06}.txt')
+    args.lidar_path = os.path.join(phase_dir, 'velodyne/{0:06}.bin')
+    args.label_path = os.path.join(phase_dir, 'label_2/{0:06}.txt')
+    args.image_path = os.path.join(phase_dir, 'image_2/{0:06}.png')
+    args.calibration_path = os.path.join(phase_dir, 'calib/{0:06}.txt')
 
     args.width, args.height = [int(x) for x in args.res.split('x')]
 
     for folder in folders:
-        directory = os.path.join(args.output_dir, folder)
+        directory = os.path.join(phase_dir, folder)
         if not os.path.exists(directory):
             os.makedirs(directory)
 

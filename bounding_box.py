@@ -1,8 +1,8 @@
 
 from carla import Transform
 
-from examples.data_collector.datadescriptor import KittiDescriptor
-from examples.data_collector.camera_utils import *
+from datadescriptor import KittiDescriptor
+from camera_utils import *
 from examples.client_bounding_boxes import ClientSideBoundingBoxes
 
 import math

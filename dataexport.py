@@ -8,14 +8,14 @@ import os
 import logging
 import math
 
-def save_groundplanes(planes_fname, player_measurements, lidar_height):
+def save_groundplanes(planes_fname, player_transform, lidar_height):
     from math import cos, sin
     """ Saves the groundplane vector of the current frame.
         The format of the ground plane file is first three lines describing the file (number of parameters).
         The next line is the three parameters of the normal vector, and the last is the height of the normal vector,
         which is the same as the distance to the camera in meters.
     """
-    rotation = player_measurements.transform.rotation
+    rotation = player_transform.rotation
     pitch, roll = rotation.pitch, rotation.roll
     # Since measurements are in degrees, convert to radians
     pitch = math.radians(pitch)
@@ -50,7 +50,7 @@ def save_image_data(filename, image):
     cv2.imwrite(filename, color_fmt)
 
 
-def save_lidar_data(filename, point_cloud, LIDAR_HEIGHT, format="bin"):
+def save_lidar_data(filename, point_cloud):
     """ Saves lidar data to given filename, according to the lidar data format.
         bin is used for KITTI-data format, while .ply is the regular point cloud format
         In Unreal, the coordinate system of the engine is defined as, which is the same as the lidar points
@@ -76,18 +76,16 @@ def save_lidar_data(filename, point_cloud, LIDAR_HEIGHT, format="bin"):
         NOTE: We do not flip the coordinate system when saving to .ply.
     """
     logging.info("Wrote lidar data to %s", filename)
-
-    if format == "bin":
-        lidar_array = [[point[0], -point[1], point[2], 1.0]
-                       for point in point_cloud]
-        lidar_array = np.array(lidar_array).astype(np.float32)
-        logging.debug("Lidar min/max of x: {} {}".format(
-                      lidar_array[:, 0].min(), lidar_array[:, 0].max()))
-        logging.debug("Lidar min/max of y: {} {}".format(
-                      lidar_array[:, 1].min(), lidar_array[:, 0].max()))
-        logging.debug("Lidar min/max of z: {} {}".format(
-                      lidar_array[:, 2].min(), lidar_array[:, 0].max()))
-        lidar_array.tofile(filename)
+    point_cloud = np.copy(point_cloud)
+    point_cloud[:, :1] = -point_cloud[:, :1]
+    lidar_array = np.array(point_cloud).astype(np.float32)
+    logging.debug("Lidar min/max of x: {} {}".format(
+                  lidar_array[:, 0].min(), lidar_array[:, 0].max()))
+    logging.debug("Lidar min/max of y: {} {}".format(
+                  lidar_array[:, 1].min(), lidar_array[:, 0].max()))
+    logging.debug("Lidar min/max of z: {} {}".format(
+                  lidar_array[:, 2].min(), lidar_array[:, 0].max()))
+    lidar_array.tofile(filename)
 
 
 def save_kitti_data(filename, datapoints):

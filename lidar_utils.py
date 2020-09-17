@@ -1,4 +1,4 @@
-from examples.data_collector.camera_utils import draw_rect
+from camera_utils import draw_rect
 import numpy as np
 
 
