@@ -564,6 +564,9 @@ class CarlaGame(object):
                     print("Target reached, mission accomplished...")
                     break
 
+                speed_limit = self.world.player.get_speed_limit()
+                self.agent.get_local_planner().set_speed(speed_limit)
+
                 control = self.agent.run_step()
                 self.world.player.apply_control(control)
 
