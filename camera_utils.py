@@ -8,6 +8,34 @@ WINDOW_HEIGHT = 720
 BB_COLOR = (248, 64, 24)
 
 
+def draw_3d_bounding_boxes(display, bounding_boxes):
+    """
+    Draws bounding boxes on pygame display.
+    """
+
+    bb_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+    bb_surface.set_colorkey((0, 0, 0))
+    for bbox in bounding_boxes:
+        points = [(int(bbox[i, 0]), int(bbox[i, 1])) for i in range(8)]
+        # draw lines
+        # base
+        pygame.draw.line(bb_surface, BB_COLOR, points[0], points[1])
+        pygame.draw.line(bb_surface, BB_COLOR, points[0], points[1])
+        pygame.draw.line(bb_surface, BB_COLOR, points[1], points[2])
+        pygame.draw.line(bb_surface, BB_COLOR, points[2], points[3])
+        pygame.draw.line(bb_surface, BB_COLOR, points[3], points[0])
+        # top
+        pygame.draw.line(bb_surface, BB_COLOR, points[4], points[5])
+        pygame.draw.line(bb_surface, BB_COLOR, points[5], points[6])
+        pygame.draw.line(bb_surface, BB_COLOR, points[6], points[7])
+        pygame.draw.line(bb_surface, BB_COLOR, points[7], points[4])
+        # base-top
+        pygame.draw.line(bb_surface, BB_COLOR, points[0], points[4])
+        pygame.draw.line(bb_surface, BB_COLOR, points[1], points[5])
+        pygame.draw.line(bb_surface, BB_COLOR, points[2], points[6])
+        pygame.draw.line(bb_surface, BB_COLOR, points[3], points[7])
+    display.blit(bb_surface, (0, 0))
+
 def draw_2d_bounding_boxes(display, boxes_2d):
     for bbox_2d in boxes_2d:
         (min_x, min_y, max_x, max_y) = bbox_2d

@@ -18,12 +18,11 @@ import open3d as o3d
 from examples.synchronous_mode import CarlaSyncMode
 from examples.automatic_control import World, HUD, KeyboardControl, BehaviorAgent, get_actor_display_name
 from examples.automatic_control import CollisionSensor, LaneInvasionSensor, GnssSensor
-from examples.client_bounding_boxes import ClientSideBoundingBoxes
 from utils import vector3d_to_array, Timer
 from bounding_box import create_kitti_datapoint
 from dataexport import save_ref_files, save_image_data, save_kitti_data, save_lidar_data
 from dataexport import save_groundplanes, save_calibration_matrices
-from camera_utils import draw_2d_bounding_boxes
+from camera_utils import draw_2d_bounding_boxes, draw_3d_bounding_boxes
 
 CLASSES_TO_LABEL = ["vehicle", "pedestrian"]
 
@@ -245,7 +244,8 @@ class CarlaGame(object):
         self._frames_since_last_capture = 0
         # How many frames we have captured since reset
         self._captured_frames_since_restart = 0
-        self.captured_frame_no = self.current_captured_frame_num(args)
+        if args.save_data:
+            self.captured_frame_no = self.current_captured_frame_num(args)
 
         self.display = pygame.display.set_mode(
             (args.width, args.height),
@@ -394,7 +394,7 @@ class CarlaGame(object):
 
         # Display 3D Bounding Boxes
         if args.vis_boxes3d:
-            ClientSideBoundingBoxes.draw_bounding_boxes(display, bounding_boxes)
+            draw_3d_bounding_boxes(display, bounding_boxes)
 
         # Display 2D Bounding Boxes
         elif args.vis_boxes2d:
@@ -434,21 +434,27 @@ class CarlaGame(object):
         bounding_boxes = []
         boxes_2d = []
         image = image.copy()
+        agents_list = []
+
+        if 'pedestrian' in CLASSES_TO_LABEL:
+            pedestrians_list = self.world.world.get_actors().filter('walker.pedestrian.*')
+            agents_list.extend(pedestrians_list)
+        if ('car' in CLASSES_TO_LABEL) or ('vehicle' in CLASSES_TO_LABEL):
+            vehicles_list = self.world.world.get_actors().filter('vehicle.*')
+            agents_list.extend(vehicles_list)
 
         # Stores all datapoints for the current frames
-        vehicles = self.world.world.get_actors().filter('walker.*')
-        for agent in vehicles:
-            if should_detect_class(agent) and args.save_data:
-                image, kitti_datapoint, bounding_box = create_kitti_datapoint(agent=agent,
-                                                                              camera=self.world.camera_manager.camera_rgb,
-                                                                              image=image,
-                                                                              depth_map=depth_map,
-                                                                              player_transform=self.world.player.get_transform(),
-                                                                              max_render_depth=args.lidar_range)
-                if kitti_datapoint:
-                    datapoints.append(kitti_datapoint)
-                    bounding_boxes.append(bounding_box)
-                    boxes_2d.append(kitti_datapoint.bbox)
+        for agent in agents_list:
+            image, kitti_datapoint, bounding_box = create_kitti_datapoint(agent=agent,
+                                                                          camera=self.world.camera_manager.camera_rgb,
+                                                                          image=image,
+                                                                          depth_map=depth_map,
+                                                                          player_transform=self.world.player.get_transform(),
+                                                                          max_render_depth=args.lidar_range)
+            if kitti_datapoint:
+                datapoints.append(kitti_datapoint)
+                bounding_boxes.append(bounding_box)
+                boxes_2d.append(kitti_datapoint.bbox)
         return image, datapoints, bounding_boxes, boxes_2d
 
     def _preprocess_sensor_data(self, sensor_data):
@@ -550,8 +556,8 @@ class CarlaGame(object):
                 # Rendering HUD
                 self.world.render(self.display)
                 pygame.display.flip()
-
-                self._save_datapoints(datapoints, rgb_image, lidar_height,  self.world.camera_manager.lidar_cam_matrix, args)
+                if args.save_data:
+                    self._save_datapoints(datapoints, rgb_image, lidar_height,  self.world.camera_manager.lidar_cam_matrix, args)
 
                 # Set new destination when target has been reached
                 if len(self.agent.get_local_planner().waypoints_queue) < self.num_min_waypoints and args.loop:
@@ -569,13 +575,6 @@ class CarlaGame(object):
 
                 control = self.agent.run_step()
                 self.world.player.apply_control(control)
-
-
-def should_detect_class(agent):
-    """ Returns true if the agent is of the classes that we want to detect.
-        Note that Carla has class types in lowercase """
-    return True in [class_type in agent.type_id for class_type in CLASSES_TO_LABEL]
-
 
 def main():
     """Main method"""
@@ -718,10 +717,11 @@ def main():
 
     args.width, args.height = [int(x) for x in args.res.split('x')]
 
-    for folder in folders:
-        directory = os.path.join(phase_dir, folder)
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+    if args.save_data:
+        for folder in folders:
+            directory = os.path.join(phase_dir, folder)
+            if not os.path.exists(directory):
+                os.makedirs(directory)
 
     log_level = logging.DEBUG if args.debug else logging.WARNING
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
