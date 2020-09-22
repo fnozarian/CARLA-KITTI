@@ -24,8 +24,8 @@ def calc_projected_2d_bbox(vertices_pos2d):
     """
     x_coords = vertices_pos2d[:, 0]
     y_coords = vertices_pos2d[:, 1]
-    min_x, max_x = min(x_coords), max(x_coords)
-    min_y, max_y = min(y_coords), max(y_coords)
+    min_x, max_x = np.min(x_coords), np.max(x_coords)
+    min_y, max_y = np.min(y_coords), np.max(y_coords)
     return [min_x, min_y, max_x, max_y]
 
 

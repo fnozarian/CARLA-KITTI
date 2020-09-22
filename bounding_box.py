@@ -108,11 +108,9 @@ def create_kitti_datapoint(agent, camera, image, depth_map, player_transform, ma
         rotation_y = get_relative_rotation_y(agent, player_transform) % math.pi
 
         datapoint = KittiDescriptor()
-        datapoint.set_3d_object_dimensions(ext)
         datapoint.set_type(obj_type)
         datapoint.set_bbox(bbox_2d)
         datapoint.set_3d_object_dimensions(ext)
-        datapoint.set_type(obj_type)
         datapoint.set_3d_object_location(sensor_refpoint)
         datapoint.set_rotation_y(rotation_y)
         return image, datapoint, camera_bbox

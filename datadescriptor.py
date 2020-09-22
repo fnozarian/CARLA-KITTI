@@ -100,25 +100,16 @@ class KittiDescriptor:
             This is a right-handed coordinate system with z being forward, x to the right and y down
             Therefore, we have to make the following changes from Carla to Kitti
             Carla: X   Y   Z
-            KITTI:-X  -Y   Z
+            KITTI: Y  -Z   X
         """
         # Object location is four values (x, y, z, w). We only care about three of them (xyz)
-        x, y, z = [float(x) for x in obj_location][0:3]
-        assert None not in [
-            self.extent, self.type], "Extent and type must be set before location!"
+        x, y, z = obj_location[0], obj_location[1], obj_location[2]
+        assert None not in [self.extent, self.type], "Extent and type must be set before location!"
         if self.type == "Pedestrian":
             # Since the midpoint/location of the pedestrian is in the middle of the agent, while for car it is at the bottom
             # we need to subtract the bbox extent in the height direction when adding location of pedestrian.
-            y -= self.extent[0]
-        # Convert from Carla coordinate system to KITTI
-        # This works for AVOD (image)
-        #x *= -1
-        #y *= -1
-        #self.location = " ".join(map(str, [y, -z, x]))
-        self.location = " ".join(map(str, [-x, -y, z]))
-        # This works for SECOND (lidar)
-        #self.location = " ".join(map(str, [z, x, y]))
-        #self.location = " ".join(map(str, [z, x, -y]))
+            z -= self.extent[0]
+        self.location = " ".join(map(str, [y, -z, x]))
 
     def set_rotation_y(self, rotation_y: float):
         assert - \

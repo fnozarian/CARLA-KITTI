@@ -52,7 +52,10 @@ class CameraManager(object):
                                    'image_size_y': str(args.height)}
         lidar_ray_cast_attributes = {'channels': '64',
                                      'range': str(args.lidar_range),
-                                     'points_per_second': '500000'}
+                                     'points_per_second': '1000000',
+                                     'rotation_frequency': '10',
+                                     'upper_fov': '10.0',
+                                     'lower_fov': '-10.0'}
         lidar_blickfeld_attributes = {'frame_mode': 'up',
                                       'scanlines': '100',
                                       'horizontal_fov_limit': '90',
@@ -61,30 +64,35 @@ class CameraManager(object):
         self.default_sensor_transform = carla.Transform(carla.Location(x=1.6, z=1.7))
         self.default_sensor_attachment_type = attachment.Rigid
 
+        # It seems there is a an issue with lidar transform that we should perform a rotation by -90 degree
+        # for correct visualization and saving on file.
+        self.default_lidar_transform = carla.Transform(self.default_sensor_transform.location, carla.Rotation(yaw=-90))
+
         # Note that camera.rgb and camera.depth should have the same config for correct detection of occluded agents
         self.sensors = {'sensor.camera.rgb': {'name': 'Camera RGB',
-                                              'attributes': camera_rgb_attributes},
+                                              'attributes': camera_rgb_attributes,
+                                              'transform': self.default_sensor_transform},
                         'sensor.camera.depth': {'name': 'Camera Depth (Gray Scale)',
-                                                'attributes': camera_depth_attributes},
+                                                'attributes': camera_depth_attributes,
+                                                'transform': self.default_sensor_transform},
                         'sensor.lidar.ray_cast': {'name': 'Lidar (Ray-Cast)',
-                                                  'attributes': lidar_ray_cast_attributes},
+                                                  'attributes': lidar_ray_cast_attributes,
+                                                  'transform': self.default_lidar_transform},
                         'sensor.lidar.blickfeld': {'name': 'Blickfeld Lidar',
-                                                   'attributes': lidar_blickfeld_attributes}}
+                                                   'attributes': lidar_blickfeld_attributes,
+                                                   'transform': self.default_sensor_transform}}
 
         self.setup_sensors()
 
-        # TODO cleanup and keep only one of the following attributes
         self.camera_rgb = self.sensors['sensor.camera.rgb']['sensor']
-        self.intrinsic = self.get_intrinsic_matrix(self.camera_rgb)
-        self.camera_rgb.calibration = self.intrinsic  # camera should have calibration attribute for using in bbox generation
-        self.camera_vehicle_transform = self.camera_rgb.get_transform()
+        self.camera_world_transform = self.camera_rgb.get_transform()
+        self.camera_rgb.calibration = self.get_intrinsic_matrix(self.camera_rgb)
 
         self.lidar_raycast = self.sensors['sensor.lidar.ray_cast']['sensor'] if 'sensor.lidar.ray_cast' in self.sensors.keys() else None
-        # TODO Why should we multiply by the following transform?
-        #  Probably related to https://github.com/carla-simulator/carla/issues/314#issuecomment-386234679
-        self.lidar_vehicle_transform = self.lidar_raycast.get_transform() if self.lidar_raycast is not None else None
-        # lidar_to_car_transform = lidar.get_transform(
-        # ) * Transform(Rotation(yaw=90), Scale(z=-1))
+        self.lidar_world_transform = self.lidar_raycast.get_transform() if self.lidar_raycast is not None else None
+
+        self.lidar_cam_matrix = np.dot(self.camera_world_transform.get_inverse_matrix(),
+                                       self.lidar_world_transform.get_matrix())
 
     def get_intrinsic_matrix(self, camera):
 
@@ -231,7 +239,6 @@ class CarlaGame(object):
             self.setup_visualizer()
 
         self.world = None
-        self._extrinsic = None
         self.point_cloud = None  # point cloud on vehicle coordinate
         # To keep track of how far the car has driven since the last capture of data
         self._agent_location_on_last_capture = None
@@ -321,7 +328,7 @@ class CarlaGame(object):
 
         return dist_func(cur_pos, last_pos)
 
-    def _save_datapoints(self, datapoints, rgb_image, lidar_height, args):
+    def _save_datapoints(self, datapoints, rgb_image, lidar_height, lidar_cam_matrix, args):
         # Determine whether to save files
         distance_driven = self._distance_since_last_recording()
         logging.debug("Distance driven since last recording: {}".format(distance_driven))
@@ -330,7 +337,7 @@ class CarlaGame(object):
             if has_driven_long_enough and datapoints:
                 self._update_agent_location()
                 # Save screen, lidar and kitti training labels together with calibration and groundplane files
-                self._save_training_files(datapoints, self.point_cloud, rgb_image, lidar_height, args)
+                self._save_training_files(datapoints, self.point_cloud, rgb_image, lidar_height, lidar_cam_matrix, args)
                 self.captured_frame_no += 1
                 self._captured_frames_since_restart += 1
                 self._frames_since_last_capture = 0
@@ -372,7 +379,7 @@ class CarlaGame(object):
             # what we see in Unreal since Open3D uses a right-handed coordinate system
             lidar_raycast_points_o3d = np.copy(lidar_raycast_points)
             lidar_raycast_points_o3d[:, :1] = -lidar_raycast_points_o3d[:, :1]
-            self.point_list.points = o3d.utility.Vector3dVector(lidar_raycast_points_o3d)
+            self.point_list.points = o3d.utility.Vector3dVector(lidar_raycast_points_o3d[:, :3])
             self.point_list.colors = o3d.utility.Vector3dVector(int_color)
 
             if self.lidar_vis_frame == 2:
@@ -397,7 +404,7 @@ class CarlaGame(object):
 
         return datapoints
 
-    def _save_training_files(self, datapoints, point_cloud, rgb_image, lidar_height, args):
+    def _save_training_files(self, datapoints, point_cloud, rgb_image, lidar_height, lidar_cam_matrix, args):
         logging.info("Attempting to save at timer step {}, frame no: {}".format(
             self._timer.step, self.captured_frame_no))
         groundplane_fname = args.groundplane_path.format(self.captured_frame_no)
@@ -410,15 +417,12 @@ class CarlaGame(object):
         save_image_data(img_fname, rgb_image)
         save_kitti_data(kitti_fname, datapoints)
         save_lidar_data(lidar_fname, point_cloud)
-        save_calibration_matrices(calib_filename, self.world.camera_manager.intrinsic, self._extrinsic)
+        save_calibration_matrices(calib_filename,
+                                  self.world.camera_manager.camera_rgb.calibration,
+                                  lidar_cam_matrix)
 
     def _update_agent_location(self):
         self._agent_location_on_last_capture = self.world.player.get_transform().location
-
-    def _update_extrinsic_matrix(self):
-        camera_vehicle_matrix = self.world.camera_manager.camera_vehicle_transform.get_matrix()
-        vehicle_world_matrix = self.world.player.get_transform().get_matrix()
-        self._extrinsic = np.dot(vehicle_world_matrix, camera_vehicle_matrix)
 
     def _generate_datapoints(self, image, depth_map, args):
         """
@@ -459,7 +463,7 @@ class CarlaGame(object):
                 points = np.reshape(points, (int(points.shape[0] / 4), 4))
                 # Removing the intensity from lidar data
                 intensity = points[:, -1]
-                points = points[:, :3]
+                # points = points[:, :3]
                 lidar_data = np.array(points[:, :2])
                 lidar_data *= min(self.hud.dim) / (2.0 * lidar_range)
                 lidar_data += (0.5 * self.hud.dim[0], 0.5 * self.hud.dim[1])
@@ -529,8 +533,6 @@ class CarlaGame(object):
                     self.reset_episode = True
                     continue
 
-                self._update_extrinsic_matrix()
-
                 self.agent.update_information(self.world)
 
                 # Tick HUD
@@ -540,9 +542,7 @@ class CarlaGame(object):
 
                 self.point_cloud = processed_sensor_data['sensor.lidar.ray_cast']['points']
                 rgb_image = processed_sensor_data['sensor.camera.rgb']['image']
-                ray_cast_lidar = self.world.camera_manager.sensors['sensor.lidar.ray_cast']['sensor']
-                lidar_height = ray_cast_lidar.get_transform().location.z
-
+                lidar_height = self.world.camera_manager.sensors['sensor.lidar.ray_cast']['transform'].location.z
                 # Rendering sensor images and creating KITTI datapoints for each frame
                 # TODO makes sense to have on_render only dealing with rendering not datapoint generation.
                 datapoints = self._render(self.display, processed_sensor_data, args)
@@ -551,7 +551,7 @@ class CarlaGame(object):
                 self.world.render(self.display)
                 pygame.display.flip()
 
-                self._save_datapoints(datapoints, rgb_image, lidar_height, args)
+                self._save_datapoints(datapoints, rgb_image, lidar_height,  self.world.camera_manager.lidar_cam_matrix, args)
 
                 # Set new destination when target has been reached
                 if len(self.agent.get_local_planner().waypoints_queue) < self.num_min_waypoints and args.loop:
@@ -723,7 +723,7 @@ def main():
         if not os.path.exists(directory):
             os.makedirs(directory)
 
-    log_level = logging.DEBUG if args.debug else logging.INFO
+    log_level = logging.DEBUG if args.debug else logging.WARNING
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
 
     logging.info('listening to server %s:%s', args.host, args.port)
