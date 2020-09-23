@@ -7,6 +7,7 @@ import pygame
 import random
 import numpy as np
 import logging
+import time
 
 import carla
 from carla import ColorConverter as cc
@@ -58,6 +59,8 @@ class CameraManager(object):
         lidar_blickfeld_attributes = {'frame_mode': 'up',
                                       'scanlines': '100',
                                       'horizontal_fov_limit': '90',
+                                      'vertical_fov_limit': '30.0',
+                                      'mirror_frequency': '150.0',  # TODO what's this?
                                       'range': str(args.lidar_range)}
 
         self.default_sensor_transform = carla.Transform(carla.Location(x=1.6, z=1.7))
@@ -73,25 +76,21 @@ class CameraManager(object):
                                               'transform': self.default_sensor_transform},
                         'sensor.camera.depth': {'name': 'Camera Depth (Gray Scale)',
                                                 'attributes': camera_depth_attributes,
-                                                'transform': self.default_sensor_transform},
-                        'sensor.lidar.ray_cast': {'name': 'Lidar (Ray-Cast)',
-                                                  'attributes': lidar_ray_cast_attributes,
-                                                  'transform': self.default_lidar_transform},
-                        'sensor.lidar.blickfeld': {'name': 'Blickfeld Lidar',
-                                                   'attributes': lidar_blickfeld_attributes,
-                                                   'transform': self.default_sensor_transform}}
+                                                'transform': self.default_sensor_transform}
+                        }
+        for lidar in args.lidars:
+            if lidar == 'ray_cast':
+                ray_cast_sensor_def = {'sensor.lidar.ray_cast': {'name': 'Ray-Cast',
+                                                                 'attributes': lidar_ray_cast_attributes,
+                                                                 'transform': self.default_lidar_transform}}
+                self.sensors.update(ray_cast_sensor_def)
+            elif lidar == 'blickfeld':
+                blickfeld_sensor_def = {'sensor.lidar.blickfeld': {'name': 'Blickfeld',
+                                                                   'attributes': lidar_blickfeld_attributes,
+                                                                   'transform': self.default_sensor_transform}}
+                self.sensors.update(blickfeld_sensor_def)
 
-        self.setup_sensors()
-
-        self.camera_rgb = self.sensors['sensor.camera.rgb']['sensor']
-        self.camera_world_transform = self.camera_rgb.get_transform()
-        self.camera_rgb.calibration = self.get_intrinsic_matrix(self.camera_rgb)
-
-        self.lidar_raycast = self.sensors['sensor.lidar.ray_cast']['sensor'] if 'sensor.lidar.ray_cast' in self.sensors.keys() else None
-        self.lidar_world_transform = self.lidar_raycast.get_transform() if self.lidar_raycast is not None else None
-
-        self.lidar_cam_matrix = np.dot(self.camera_world_transform.get_inverse_matrix(),
-                                       self.lidar_world_transform.get_matrix())
+        self.setup_sensors(args)
 
     def get_intrinsic_matrix(self, camera):
 
@@ -110,7 +109,7 @@ class CameraManager(object):
         """Activate a camera"""
         self.hud.notification('Only single camera transform is available!')
 
-    def setup_sensors(self):
+    def setup_sensors(self, args):
         # Spawns all sensors
         world = self._parent.get_world()
         bp_library = world.get_blueprint_library()
@@ -125,6 +124,24 @@ class CameraManager(object):
                                                           attach_to=self._parent,
                                                           attachment_type=attach_type)
             self.sensors[sensor_key].update({'sensor': sensor})
+
+            # Setup intrinsic matrix for camera rgb sensor
+            if sensor_key == 'sensor.camera.rgb':
+                camera_rgb_intrinsic = self.get_intrinsic_matrix(sensor)
+                self.sensors[sensor_key].update({'calibration': camera_rgb_intrinsic})
+
+            if args.vis_lidar:
+                # Setup open3d visualization for lidars
+                if 'lidar' in sensor_key:
+                    sensor_name = self.sensors[sensor_key]['name']
+                    o3d_vis = o3d.visualization.Visualizer()
+                    o3d_vis.create_window(
+                        window_name=f'Carla {sensor_name} Lidar', width=960, height=540, left=480, top=270)
+                    o3d_vis.get_render_option().background_color = [0.05, 0.05, 0.05]
+                    o3d_vis.get_render_option().point_size = 1
+                    o3d_vis.get_render_option().show_coordinate_frame = True
+                    point_list = o3d.geometry.PointCloud()
+                    self.sensors[sensor_key].update({'o3d_vis': o3d_vis, 'point_list': point_list, 'lidar_vis_frame': 0})
 
     def set_sensor(self, index, notify=True):
         """Set a sensor"""
@@ -231,14 +248,7 @@ class CarlaGame(object):
         self._timer = Timer()
         self.reset_episode = True
         self.clock = pygame.time.Clock()
-        self.o3d_vis = None
-        self.point_list = None
-        self.lidar_vis_frame = 0
-        if args.vis_lidar:
-            self.setup_visualizer()
-
         self.world = None
-        self.point_cloud = None  # point cloud on vehicle coordinate
         # To keep track of how far the car has driven since the last capture of data
         self._agent_location_on_last_capture = None
         self._frames_since_last_capture = 0
@@ -252,6 +262,7 @@ class CarlaGame(object):
             pygame.HWSURFACE | pygame.DOUBLEBUF)
         client = carla.Client(args.host, args.port)
         client.set_timeout(4.0)
+        client.reload_world()
         self.hud = HUD(args.width, args.height)
         self.world = World(client.get_world(), self.hud, args)
 
@@ -268,19 +279,6 @@ class CarlaGame(object):
             destination = self.spawn_points[1].location
 
         self.agent.set_destination(self.agent.vehicle.get_location(), destination, clean=True)
-
-    def setup_visualizer(self):
-        self.o3d_vis = o3d.visualization.Visualizer()
-        self.o3d_vis.create_window(
-            window_name='Carla Lidar',
-            width=960,
-            height=540,
-            left=480,
-            top=270)
-        self.o3d_vis.get_render_option().background_color = [0.05, 0.05, 0.05]
-        self.o3d_vis.get_render_option().point_size = 1
-        self.o3d_vis.get_render_option().show_coordinate_frame = True
-        self.point_list = o3d.geometry.PointCloud()
 
     def current_captured_frame_num(self, args):
         # Figures out which frame number we currently are on
@@ -328,7 +326,7 @@ class CarlaGame(object):
 
         return dist_func(cur_pos, last_pos)
 
-    def _save_datapoints(self, datapoints, rgb_image, lidar_height, lidar_cam_matrix, args):
+    def _save_datapoints(self, datapoints, cam_calibration, rgb_image, point_clouds, lidar_heights, args):
         # Determine whether to save files
         distance_driven = self._distance_since_last_recording()
         logging.debug("Distance driven since last recording: {}".format(distance_driven))
@@ -337,7 +335,7 @@ class CarlaGame(object):
             if has_driven_long_enough and datapoints:
                 self._update_agent_location()
                 # Save screen, lidar and kitti training labels together with calibration and groundplane files
-                self._save_training_files(datapoints, self.point_cloud, rgb_image, lidar_height, lidar_cam_matrix, args)
+                self._save_training_files(datapoints, cam_calibration, point_clouds, rgb_image, lidar_heights, args)
                 self.captured_frame_no += 1
                 self._captured_frames_since_restart += 1
                 self._frames_since_last_capture = 0
@@ -358,39 +356,45 @@ class CarlaGame(object):
         depth_map = sensor_data_dict['sensor.camera.depth']['depth']
 
         # Retrieve and draw datapoints on rgb image
+        datapoint_gen_time = time.time()
         image, datapoints, bounding_boxes, boxes_2d = self._generate_datapoints(image, depth_map, args)
-
+        logging.info("datapoint generation time: ", (time.time() - datapoint_gen_time) * 1000.)
         # Display RGB Image
         surface = pygame.surfarray.make_surface(image.swapaxes(0, 1))
         display.blit(surface, (0, 0))
 
         # TODO Display lidar point cloud on rgb image
         if args.vis_lidar:
-            lidar_raycast_image = sensor_data_dict['sensor.lidar.ray_cast']['image']  # For visualization
-            lidar_raycast_points = sensor_data_dict['sensor.lidar.ray_cast']['points']
-            lidar_raycast_intensity = sensor_data_dict['sensor.lidar.ray_cast']['intensity']
-            intensity_col = 1.0 - np.log(lidar_raycast_intensity) / np.log(np.exp(-0.004 * 100))
-            int_color = np.c_[
-                np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 0]),
-                np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 1]),
-                np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 2])]
+            for key in sensor_data_dict.keys():
+                if 'lidar' in key:
+                    lidar_points = sensor_data_dict[key]['points']
+                    lidar_intensity = lidar_points[:, -1]
+                    lidar_point_list = self.world.camera_manager.sensors[key]['point_list']  # assume pass by ref
+                    lidar_vis_frame = self.world.camera_manager.sensors[key]['lidar_vis_frame']
+                    o3d_vis = self.world.camera_manager.sensors[key]['o3d_vis']
+                    intensity_col = 1.0 - np.log(lidar_intensity) / np.log(np.exp(-0.004 * 100))
+                    int_color = np.c_[
+                        np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 0]),
+                        np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 1]),
+                        np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 2])]
 
-            # We're negating the y to correclty visualize a world that matches
-            # what we see in Unreal since Open3D uses a right-handed coordinate system
-            lidar_raycast_points_o3d = np.copy(lidar_raycast_points)
-            lidar_raycast_points_o3d[:, :1] = -lidar_raycast_points_o3d[:, :1]
-            self.point_list.points = o3d.utility.Vector3dVector(lidar_raycast_points_o3d[:, :3])
-            self.point_list.colors = o3d.utility.Vector3dVector(int_color)
+                    # We're negating the y to correclty visualize a world that matches
+                    # what we see in Unreal since Open3D uses a right-handed coordinate system
+                    lidar_raycast_points_o3d = np.copy(lidar_points)
+                    lidar_raycast_points_o3d[:, :1] = -lidar_raycast_points_o3d[:, :1]
+                    lidar_point_list.points = o3d.utility.Vector3dVector(lidar_raycast_points_o3d[:, :3])
+                    lidar_point_list.colors = o3d.utility.Vector3dVector(int_color)
 
-            if self.lidar_vis_frame == 2:
-                self.o3d_vis.add_geometry(self.point_list)
-            self.o3d_vis.update_geometry(self.point_list)
+                    if lidar_vis_frame == 2:
+                        o3d_vis.add_geometry(lidar_point_list)
+                    o3d_vis.update_geometry(lidar_point_list)
 
-            self.o3d_vis.poll_events()
-            self.o3d_vis.update_renderer()
-            # # This can fix Open3D jittering issues:
-            # time.sleep(0.005)
-            self.lidar_vis_frame += 1
+                    o3d_vis.poll_events()
+                    o3d_vis.update_renderer()
+                    # # This can fix Open3D jittering issues:
+                    # time.sleep(0.005)
+                    lidar_vis_frame += 1
+                    self.world.camera_manager.sensors[key]['lidar_vis_frame'] = lidar_vis_frame
 
         # Display 3D Bounding Boxes
         if args.vis_boxes3d:
@@ -404,22 +408,27 @@ class CarlaGame(object):
 
         return datapoints
 
-    def _save_training_files(self, datapoints, point_cloud, rgb_image, lidar_height, lidar_cam_matrix, args):
+    def _save_training_files(self, datapoints, cam_calibration, point_clouds, rgb_image, lidar_heights, args):
         logging.info("Attempting to save at timer step {}, frame no: {}".format(
             self._timer.step, self.captured_frame_no))
-        groundplane_fname = args.groundplane_path.format(self.captured_frame_no)
-        lidar_fname = args.lidar_path.format(self.captured_frame_no)
+
+        for g_path, l_path, c_path, point_cloud, l_height in zip(args.groundplane_paths,
+                                                                 args.lidar_paths,
+                                                                 args.calibration_paths,
+                                                                 point_clouds,
+                                                                 lidar_heights):
+            groundplane_fname = g_path.format(self.captured_frame_no)
+            lidar_fname = l_path.format(self.captured_frame_no)
+            calib_filename = c_path.format(self.captured_frame_no)
+            save_groundplanes(groundplane_fname, self.world.player.get_transform(), l_height)
+            save_lidar_data(lidar_fname, point_cloud)
+            save_calibration_matrices(calib_filename, cam_calibration)
+
         kitti_fname = args.label_path.format(self.captured_frame_no)
         img_fname = args.image_path.format(self.captured_frame_no)
-        calib_filename = args.calibration_path.format(self.captured_frame_no)
-        save_groundplanes(groundplane_fname, self.world.player.get_transform(), lidar_height)
         save_ref_files(args.phase_dir, self.captured_frame_no)
         save_image_data(img_fname, rgb_image)
         save_kitti_data(kitti_fname, datapoints)
-        save_lidar_data(lidar_fname, point_cloud)
-        save_calibration_matrices(calib_filename,
-                                  self.world.camera_manager.camera_rgb.calibration,
-                                  lidar_cam_matrix)
 
     def _update_agent_location(self):
         self._agent_location_on_last_capture = self.world.player.get_transform().location
@@ -446,7 +455,8 @@ class CarlaGame(object):
         # Stores all datapoints for the current frames
         for agent in agents_list:
             image, kitti_datapoint, bounding_box = create_kitti_datapoint(agent=agent,
-                                                                          camera=self.world.camera_manager.camera_rgb,
+                                                                          camera=self.world.camera_manager.sensors['sensor.camera.rgb']['sensor'],
+                                                                          cam_calibration=self.world.camera_manager.sensors['sensor.camera.rgb']['calibration'],
                                                                           image=image,
                                                                           depth_map=depth_map,
                                                                           player_transform=self.world.player.get_transform(),
@@ -468,8 +478,6 @@ class CarlaGame(object):
                 points = np.frombuffer(sensor_data.raw_data, dtype=np.dtype('f4'))
                 points = np.reshape(points, (int(points.shape[0] / 4), 4))
                 # Removing the intensity from lidar data
-                intensity = points[:, -1]
-                # points = points[:, :3]
                 lidar_data = np.array(points[:, :2])
                 lidar_data *= min(self.hud.dim) / (2.0 * lidar_range)
                 lidar_data += (0.5 * self.hud.dim[0], 0.5 * self.hud.dim[1])
@@ -480,7 +488,7 @@ class CarlaGame(object):
                 lidar_img = np.zeros(lidar_img_size)
                 lidar_img[tuple(lidar_data.T)] = (255, 255, 255)
 
-                processed_data.update({sensor_key: {'image': lidar_img, 'points': points, 'intensity': intensity}})
+                processed_data.update({sensor_key: {'image': lidar_img, 'points': points}})
             else:
                 color_converter = cc.Depth if 'depth' in sensor_key else cc.Raw
                 sensor_data.convert(color_converter)
@@ -546,9 +554,6 @@ class CarlaGame(object):
 
                 processed_sensor_data = self._preprocess_sensor_data(sensors_data_dict)
 
-                self.point_cloud = processed_sensor_data['sensor.lidar.ray_cast']['points']
-                rgb_image = processed_sensor_data['sensor.camera.rgb']['image']
-                lidar_height = self.world.camera_manager.sensors['sensor.lidar.ray_cast']['transform'].location.z
                 # Rendering sensor images and creating KITTI datapoints for each frame
                 # TODO makes sense to have on_render only dealing with rendering not datapoint generation.
                 datapoints = self._render(self.display, processed_sensor_data, args)
@@ -556,8 +561,24 @@ class CarlaGame(object):
                 # Rendering HUD
                 self.world.render(self.display)
                 pygame.display.flip()
+
                 if args.save_data:
-                    self._save_datapoints(datapoints, rgb_image, lidar_height,  self.world.camera_manager.lidar_cam_matrix, args)
+
+                    point_clouds = []
+                    lidar_heights = []
+                    for key in processed_sensor_data.keys():
+                        if 'lidar' in key:
+                            point_cloud = processed_sensor_data[key]['points']
+                            lidar_height = self.world.camera_manager.sensors[key]['transform'].location.z
+                            point_clouds.append(point_cloud)
+                            lidar_heights.append(lidar_height)
+
+                    rgb_image = processed_sensor_data['sensor.camera.rgb']['image']
+                    self._save_datapoints(datapoints,
+                                          self.world.camera_manager.sensors['sensor.camera.rgb']['calibration'],
+                                          rgb_image,
+                                          point_clouds,
+                                          lidar_heights, args)
 
                 # Set new destination when target has been reached
                 if len(self.agent.get_local_planner().waypoints_queue) < self.num_min_waypoints and args.loop:
@@ -663,6 +684,12 @@ def main():
         type=int,
         help='How many frames to render before resetting the environment. For example, the agent may be stuck')
     argparser.add_argument(
+        '--lidars',
+        nargs='+',
+        help='List of lidar types used for visualization and data collection.' +
+             'Available options are \"ray_cast\" and \"blickfeld\"',
+        default=['ray_cast'])
+    argparser.add_argument(
         '--lidar_range',
         default=100.,
         type=float,
@@ -693,35 +720,62 @@ def main():
 
     # TODO this is a workaround for spawning pedestrians and vehicles. In future should be replaced by
     #  scenario runner configs
-    # spawn_npc_path = os.path.join(carla_root, 'PythonAPI', 'examples', 'spawn_npc.py')
-    #
-    # def target(**kwargs):
-    #     process = subprocess.Popen([spawn_npc_path, '-w 200'], **kwargs)
-    #     process.communicate()
-    #
-    # thread = threading.Thread(target=target, kwargs={'stdout':subprocess.PIPE, 'shell':True})
-    # thread.start()
+    spawn_npc_path = os.path.join(carla_root, 'PythonAPI', 'examples', 'spawn_npc.py')
+
+    def target(**kwargs):
+        process = subprocess.Popen([spawn_npc_path, '-w 200'], **kwargs)
+        process.communicate()
+
+    thread = threading.Thread(target=target, kwargs={'stdout':subprocess.PIPE, 'shell':True})
+    thread.start()
 
     args = argparser.parse_args()
 
     phase_dir = os.path.join(args.output_dir, args.phase)
-    folders = ['calib', 'image_2', 'label_2', 'velodyne', 'planes']
+    default_folders = ['calib', 'image_2', 'label_2', 'velodyne', 'planes']
+
+    assert all([lidar in ['ray_cast', 'blickfeld'] for lidar in args.lidars])
 
     """ DATA SAVE PATHS """
     args.phase_dir = phase_dir
-    args.groundplane_path = os.path.join(phase_dir, 'planes/{0:06}.txt')
-    args.lidar_path = os.path.join(phase_dir, 'velodyne/{0:06}.bin')
+
     args.label_path = os.path.join(phase_dir, 'label_2/{0:06}.txt')
     args.image_path = os.path.join(phase_dir, 'image_2/{0:06}.png')
-    args.calibration_path = os.path.join(phase_dir, 'calib/{0:06}.txt')
+
 
     args.width, args.height = [int(x) for x in args.res.split('x')]
 
     if args.save_data:
-        for folder in folders:
+
+        default_groundplane_path = os.path.join(phase_dir, 'planes/{0:06}.txt')
+        default_lidar_path = os.path.join(phase_dir, 'velodyne/{0:06}.bin')
+        default_calibration_path = os.path.join(phase_dir, 'calib/{0:06}.txt')
+
+        groundplane_paths = [default_groundplane_path]
+        lidar_paths = [default_lidar_path]
+        calibration_paths = [default_calibration_path]
+
+        if len(args.lidars) > 1:
+            logging.warning('More than one lidar type is provided.' +
+                            'The first lidar type gets default names for kitti dataset.' +
+                            'Others will get default names with a postfix.')
+
+            for lidar in args.lidars[1:]:
+                default_folders.append(f'planes_{lidar}')
+                default_folders.append(f'velodyne_{lidar}')
+                default_folders.append(f'calib_{lidar}')
+                groundplane_paths.append(os.path.join(phase_dir, f'planes_{lidar}', '{0:06}.txt'))
+                lidar_paths.append(os.path.join(phase_dir, f'velodyne_{lidar}', '{0:06}.bin'))
+                calibration_paths.append(os.path.join(phase_dir, f'calib_{lidar}', '{0:06}.txt'))
+
+        for folder in default_folders:
             directory = os.path.join(phase_dir, folder)
             if not os.path.exists(directory):
                 os.makedirs(directory)
+
+        args.groundplane_paths = groundplane_paths
+        args.lidar_paths = lidar_paths
+        args.calibration_paths = calibration_paths
 
     log_level = logging.DEBUG if args.debug else logging.WARNING
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)

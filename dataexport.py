@@ -98,7 +98,7 @@ def save_kitti_data(filename, datapoints):
     logging.info("Wrote kitti data to %s", filename)
 
 
-def save_calibration_matrices(filename, intrinsic_mat, lidar_cam_mat):
+def save_calibration_matrices(filename, intrinsic_mat):
     """ Saves the calibration matrices to a file.
         AVOD (and KITTI) refers to P as P=K*[R;t], so we will just store P.
         The resulting file will contain:

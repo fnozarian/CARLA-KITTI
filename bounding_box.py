@@ -45,7 +45,7 @@ def calculate_occlusion_stats(image, bbox_points, depth_map, max_render_depth, d
     return num_visible_vertices, num_vertices_outside_camera
 
 
-def get_bounding_box_and_refpoint(agent, camera):
+def get_bounding_box_and_refpoint(agent, camera, camera_calibration):
     """
     An extended version of Carla get_bounding_box() method, where the reference point of the bbox is also
     concatenated with the bbox vertices to boost the performance as all vertices and refpoint are processed in parallel.
@@ -57,7 +57,7 @@ def get_bounding_box_and_refpoint(agent, camera):
 
     cords_x_y_z = ClientSideBoundingBoxes._vehicle_to_sensor(bb_cords_and_refpoint, agent, camera)[:3, :]
     cords_y_minus_z_x = np.concatenate([cords_x_y_z[1, :], -cords_x_y_z[2, :], cords_x_y_z[0, :]])
-    bbox_and_refpoint = np.transpose(np.dot(camera.calibration, cords_y_minus_z_x))
+    bbox_and_refpoint = np.transpose(np.dot(camera_calibration, cords_y_minus_z_x))
     camera_bbox_refpoint = np.concatenate([bbox_and_refpoint[:, 0] / bbox_and_refpoint[:, 2], bbox_and_refpoint[:, 1] / bbox_and_refpoint[:, 2], bbox_and_refpoint[:, 2]], axis=1)
 
     sensor_bbox_refpoint = np.transpose(cords_x_y_z)
@@ -70,7 +70,7 @@ def get_bounding_box_and_refpoint(agent, camera):
     return (camera_bbox, camera_refpoint), (sensor_bbox, sensor_refpoint)
 
 
-def create_kitti_datapoint(agent, camera, image, depth_map, player_transform, max_render_depth=70):
+def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, player_transform, max_render_depth=70):
     """
     Calculates the bounding box of the given agent, and
     returns a KittiDescriptor which describes the object to be labeled
@@ -83,7 +83,7 @@ def create_kitti_datapoint(agent, camera, image, depth_map, player_transform, ma
             "Could not get bounding box for agent. Object type is None")
         return image, None
 
-    (camera_bbox, camera_refpoint), (sensor_bbox, sensor_refpoint) = get_bounding_box_and_refpoint(agent, camera)
+    (camera_bbox, camera_refpoint), (sensor_bbox, sensor_refpoint) = get_bounding_box_and_refpoint(agent, camera, cam_calibration)
 
     num_visible_vertices, num_vertices_outside_camera = calculate_occlusion_stats(image,
                                                                                   camera_bbox,
