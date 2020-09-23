@@ -105,10 +105,9 @@ class KittiDescriptor:
         # Object location is four values (x, y, z, w). We only care about three of them (xyz)
         x, y, z = obj_location[0], obj_location[1], obj_location[2]
         assert None not in [self.extent, self.type], "Extent and type must be set before location!"
-        if self.type == "Pedestrian":
-            # Since the midpoint/location of the pedestrian is in the middle of the agent, while for car it is at the bottom
-            # we need to subtract the bbox extent in the height direction when adding location of pedestrian.
-            z -= self.extent[0]
+        # Both car and pedestrian's midpoint/location are in the middle of the agent.
+        # we need to subtract the bbox extent in the height direction when adding location of agent.
+        z -= self.extent[0]
         self.location = " ".join(map(str, [y, -z, x]))
 
     def set_rotation_y(self, rotation_y: float):

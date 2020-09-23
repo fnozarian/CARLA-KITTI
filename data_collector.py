@@ -387,6 +387,10 @@ class CarlaGame(object):
 
                     if lidar_vis_frame == 2:
                         o3d_vis.add_geometry(lidar_point_list)
+                        mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+                            size=2, origin=[0, 0, 0])
+                        o3d_vis.add_geometry(mesh_frame)
+
                     o3d_vis.update_geometry(lidar_point_list)
 
                     o3d_vis.poll_events()
@@ -477,7 +481,20 @@ class CarlaGame(object):
 
                 points = np.frombuffer(sensor_data.raw_data, dtype=np.dtype('f4'))
                 points = np.reshape(points, (int(points.shape[0] / 4), 4))
-                # Removing the intensity from lidar data
+                points = np.copy(points)
+
+                if 'blickfeld' in sensor_key:
+                    # Swapping x and y axis in blickfeld lidar for correct visualization
+                    points[:, [0, 1]] = points[:, [1, 0]]
+
+                    # To make coordinate system consistent with default ray_cast lidar we turn right-hand coordinate sys
+                    # to left-hand for blickfeld
+                    points[:, 0] = -points[:, 0]
+
+                    # Looks like that the blickfeld produces values for x-axis beyond lidar range.
+                    # We thus cut the points based on the lidar range.
+                    points[points[:, 1] > lidar_range] = lidar_range - 0.01
+
                 lidar_data = np.array(points[:, :2])
                 lidar_data *= min(self.hud.dim) / (2.0 * lidar_range)
                 lidar_data += (0.5 * self.hud.dim[0], 0.5 * self.hud.dim[1])
