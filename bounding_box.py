@@ -15,7 +15,6 @@ MIN_BBOX_AREA_IN_PX = 100
 
 
 # TODO Make computations faster by vectorization
-# def calculate_occlusion_stats(image, bbox_points, depth_map, max_render_depth, draw_vertices=True):
 def calculate_occlusion_stats(image, bbox_points, depth_map, max_render_depth, draw_vertices=True):
     """ Draws each vertex in vertices_pos2d if it is in front of the camera
         The color is based on whether the object is occluded or not.
@@ -89,7 +88,7 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
                                                                                   camera_bbox,
                                                                                   depth_map,
                                                                                   max_render_depth,
-                                                                                  draw_vertices=True)
+                                                                                  draw_vertices=False)
 
     # At least N vertices has to be visible in order to draw bbox
     if num_visible_vertices >= MIN_VISIBLE_VERTICES_FOR_RENDER > num_vertices_outside_camera:

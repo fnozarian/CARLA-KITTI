@@ -50,15 +50,20 @@ class CameraManager(object):
                                  'image_size_y': str(args.height)}
         camera_depth_attributes = {'image_size_x': str(args.width),
                                    'image_size_y': str(args.height)}
-        lidar_ray_cast_attributes = {'channels': '64',
-                                     'range': str(args.lidar_range),
-                                     'points_per_second': '1000000',
-                                     'rotation_frequency': '10',
-                                     'upper_fov': '10.0',
-                                     'lower_fov': '-10.0'}
+        lidar_ray_cast_attributes = {'channels': '64',                        # kitti paper: 64  repo: 40
+                                     'range': str(args.lidar_range),          # kitti paper: 120
+                                     'points_per_second': '1300000',          # kitti paper: ~1300000  repo: 720000
+                                     'rotation_frequency': '10',              # repo/paper: 10
+                                     'upper_fov': '7.0',                      # repo: 7  paper vert fov: 26.9°
+                                     'lower_fov': '-16.0',                    # repo: -16  paper vert fov: 26.9°
+                                     'atmosphere_attenuation_rate': '0.004',  # carla: 0.004
+                                     'noise_stddev': '0.0',                   # carla: 0.0
+                                     'dropoff_general_rate': '0.10',          # carla: 0.45
+                                     'dropoff_zero_intensity': '0.4',         # carla: 0.4
+                                     'dropoff_intensity_limit': '0.8'}        # carla: 0.8
         lidar_blickfeld_attributes = {'frame_mode': 'up',
-                                      'scanlines': '100',
-                                      'horizontal_fov_limit': '90',
+                                      'scanlines': '50',
+                                      'horizontal_fov_limit': '70',
                                       'vertical_fov_limit': '30.0',
                                       'mirror_frequency': '150.0',  # TODO what's this?
                                       'range': str(args.lidar_range)}
@@ -638,7 +643,7 @@ def main():
     argparser.add_argument(
         '--res',
         metavar='WIDTHxHEIGHT',
-        default='1280x720',
+        default='1248x384',
         help='Window resolution (default: 1280x720)')
     argparser.add_argument(
         '--filter',
@@ -723,7 +728,7 @@ def main():
         help='Phase can be one of (training|val|test)')
     argparser.add_argument(
         '--output_dir',
-        default='_out',
+        default='./data/object',
         type=str,
         help='Path to output directory')
     argparser.add_argument(

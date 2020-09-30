@@ -3,8 +3,8 @@ from numpy.linalg import inv
 import pygame
 
 # TODO Get width and height from the args
-WINDOW_WIDTH = 1280
-WINDOW_HEIGHT = 720
+WINDOW_WIDTH = 1248
+WINDOW_HEIGHT = 384
 BB_COLOR = (248, 64, 24)
 
 
