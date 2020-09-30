@@ -17,7 +17,7 @@ import open3d as o3d
 # Note: add PythonAPI and PythonAPI/carla into python path
 
 from examples.synchronous_mode import CarlaSyncMode
-from examples.automatic_control import World, HUD, KeyboardControl, BehaviorAgent, get_actor_display_name
+from examples.automatic_control import World, HUD, KeyboardControl, BehaviorAgent, BasicAgent, get_actor_display_name
 from examples.automatic_control import CollisionSensor, LaneInvasionSensor, GnssSensor
 from utils import vector3d_to_array, Timer
 from bounding_box import create_kitti_datapoint
@@ -205,6 +205,9 @@ class World(World):
             spawn_points = self.map.get_spawn_points()
             spawn_point = random.choice(spawn_points) if spawn_points else carla.Transform()
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
+            if args.autopilot:
+                self.player.set_autopilot()
+
         # Set up the sensors.
         self.collision_sensor = CollisionSensor(self.player, self.hud)
         self.lane_invasion_sensor = LaneInvasionSensor(self.player, self.hud)
@@ -267,18 +270,18 @@ class CarlaGame(object):
         self.world = World(client.get_world(), self.hud, args)
 
         self.controller = KeyboardControl(self.world)
+        if (args.autopilot == False):
+            self.agent = BehaviorAgent(self.world.player)
 
-        self.agent = BehaviorAgent(self.world.player)
+            self.spawn_points = self.world.map.get_spawn_points()
+            random.shuffle(self.spawn_points)
 
-        self.spawn_points = self.world.map.get_spawn_points()
-        random.shuffle(self.spawn_points)
+            if self.spawn_points[0].location != self.agent.vehicle.get_location():
+                destination = self.spawn_points[0].location
+            else:
+                destination = self.spawn_points[1].location
 
-        if self.spawn_points[0].location != self.agent.vehicle.get_location():
-            destination = self.spawn_points[0].location
-        else:
-            destination = self.spawn_points[1].location
-
-        self.agent.set_destination(self.agent.vehicle.get_location(), destination, clean=True)
+            self.agent.set_destination(self.agent.vehicle.get_location(), destination, clean=True)
 
     def current_captured_frame_num(self, args):
         # Figures out which frame number we currently are on
@@ -302,7 +305,7 @@ class CarlaGame(object):
             num_existing_data_files))
         return num_existing_data_files
 
-    def _on_new_episode(self):
+    def _on_new_episode(self, args):
         logging.info('Starting a new episode...')
 
         self._timer = Timer()
@@ -314,7 +317,8 @@ class CarlaGame(object):
         self._frames_since_last_capture = 0
         self._captured_frames_since_restart = 0
 
-        self.agent.reroute(self.spawn_points)
+        if (args.autopilot == False):
+            self.agent.reroute(self.spawn_points)
 
     def _distance_since_last_recording(self):
         if self._agent_location_on_last_capture is None:
@@ -559,12 +563,13 @@ class CarlaGame(object):
                         logging.warning("The agent is either stuck or can't find any agents!")
                     if is_enough_datapoints:
                         logging.info("Enough datapoints captured. The episode is going to restart.")
-                    self._on_new_episode()
+                    self._on_new_episode(args)
                     # If we dont sleep, the client will continue to render
                     self.reset_episode = True
                     continue
 
-                self.agent.update_information(self.world)
+                if (args.autopilot == False):
+                    self.agent.update_information(self.world)
 
                 # Tick HUD
                 self.world.tick(self.clock)
@@ -597,22 +602,23 @@ class CarlaGame(object):
                                           point_clouds,
                                           lidar_heights, args)
 
-                # Set new destination when target has been reached
-                if len(self.agent.get_local_planner().waypoints_queue) < self.num_min_waypoints and args.loop:
-                    self.agent.reroute(self.spawn_points)
-                    self.tot_target_reached += 1
-                    self.world.hud.notification("The target has been reached " +
-                                           str(self.tot_target_reached) + " times.", seconds=4.0)
+                if (args.autopilot == False):
+                    # Set new destination when target has been reached
+                    if len(self.agent.get_local_planner().waypoints_queue) < self.num_min_waypoints and args.loop:
+                        self.agent.reroute(self.spawn_points)
+                        self.tot_target_reached += 1
+                        self.world.hud.notification("The target has been reached " +
+                                               str(self.tot_target_reached) + " times.", seconds=4.0)
 
-                elif len(self.agent.get_local_planner().waypoints_queue) == 0 and not args.loop:
-                    print("Target reached, mission accomplished...")
-                    break
+                    elif len(self.agent.get_local_planner().waypoints_queue) == 0 and not args.loop:
+                        print("Target reached, mission accomplished...")
+                        break
 
-                speed_limit = self.world.player.get_speed_limit()
-                self.agent.get_local_planner().set_speed(speed_limit)
+                    speed_limit = self.world.player.get_speed_limit()
+                    self.agent.get_local_planner().set_speed(speed_limit)
 
-                control = self.agent.run_step()
-                self.world.player.apply_control(control)
+                    control = self.agent.run_step()
+                    self.world.player.apply_control(control)
 
 def main():
     """Main method"""
@@ -731,6 +737,10 @@ def main():
         default=10,
         type=int,
         help='Simulation FPS')
+    argparser.add_argument(
+        '-a', '--autopilot',
+        action='store_true',
+        help='Enable default autopilot. If not, a behavior agent will be used')
 
     carla_root = os.getenv('CARLA_ROOT')
     assert carla_root is not None, 'Please set the CARLA_ROOT variable environment!'
@@ -747,7 +757,6 @@ def main():
     thread.start()
 
     args = argparser.parse_args()
-
     phase_dir = os.path.join(args.output_dir, args.phase)
     default_folders = ['calib', 'image_2', 'label_2', 'velodyne', 'planes']
 
@@ -802,7 +811,6 @@ def main():
     print(__doc__)
 
     carla_game = CarlaGame(args)
-
     try:
 
         carla_game.game_loop(args)
