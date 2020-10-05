@@ -77,17 +77,8 @@ def save_lidar_data(filename, point_cloud):
     """
     logging.info("Wrote lidar data to %s", filename)
     point_cloud = np.copy(point_cloud)
-    point_cloud[:, :0] = -point_cloud[:, :0]
-    point_cloud = np.concatenate([point_cloud[:, 1].reshape(-1, 1),
-                                  point_cloud[:, 0].reshape(-1, 1),
-                                  point_cloud[:, 2:].reshape(-1, 2)], axis=1)
+    point_cloud[:, 1] = -point_cloud[:, 1]
     lidar_array = np.array(point_cloud).astype(np.float32)
-    logging.debug("Lidar min/max of x: {} {}".format(
-                  lidar_array[:, 0].min(), lidar_array[:, 0].max()))
-    logging.debug("Lidar min/max of y: {} {}".format(
-                  lidar_array[:, 1].min(), lidar_array[:, 0].max()))
-    logging.debug("Lidar min/max of z: {} {}".format(
-                  lidar_array[:, 2].min(), lidar_array[:, 0].max()))
     lidar_array.tofile(filename)
 
 
@@ -98,7 +89,7 @@ def save_kitti_data(filename, datapoints):
     logging.info("Wrote kitti data to %s", filename)
 
 
-def save_calibration_matrices(filename, intrinsic_mat):
+def save_calibration_matrices(filename, intrinsic_mat, lidar_cam_mat):
     """ Saves the calibration matrices to a file.
         AVOD (and KITTI) refers to P as P=K*[R;t], so we will just store P.
         The resulting file will contain:
@@ -120,7 +111,10 @@ def save_calibration_matrices(filename, intrinsic_mat):
     P0 = np.column_stack((P0, np.array([0, 0, 0])))
     P0 = np.ravel(P0, order=ravel_mode)
     R0 = np.identity(3)
-    # TODO why we are doing this? Should be based on the exact relative transform of lidar and cam not hardcoded!
+
+    # TODO Remove the bellow hardcoded transformation and write it based on the lidar_cam_mat matrix.
+    #  We need to convert left-hand camera frame to right-hand kitti camera frame.
+
     TR_velodyne = np.array([[0, -1, 0],
                             [0, 0, -1],
                             [1, 0, 0]])

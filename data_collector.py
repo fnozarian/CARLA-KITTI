@@ -72,8 +72,8 @@ class CameraManager(object):
         self.default_sensor_attachment_type = attachment.Rigid
 
         # It seems there is a an issue with lidar transform that we should perform a rotation by -90 degree
-        # for correct visualization and saving on file.
-        self.default_lidar_transform = carla.Transform(self.default_sensor_transform.location, carla.Rotation(yaw=-90))
+        # for correct visualization and saving on file. This is solved in carla 0.9.10! Uncomment it for carla 0.9.9.
+        # self.default_lidar_transform = carla.Transform(self.default_sensor_transform.location, carla.Rotation(yaw=-90))
 
         # Note that camera.rgb and camera.depth should have the same config for correct detection of occluded agents
         self.sensors = {'sensor.camera.rgb': {'name': 'Camera RGB',
@@ -87,7 +87,7 @@ class CameraManager(object):
             if lidar == 'ray_cast':
                 ray_cast_sensor_def = {'sensor.lidar.ray_cast': {'name': 'Ray-Cast',
                                                                  'attributes': lidar_ray_cast_attributes,
-                                                                 'transform': self.default_lidar_transform}}
+                                                                 'transform': self.default_sensor_transform}}
                 self.sensors.update(ray_cast_sensor_def)
             elif lidar == 'blickfeld':
                 blickfeld_sensor_def = {'sensor.lidar.blickfeld': {'name': 'Blickfeld',
@@ -134,6 +134,13 @@ class CameraManager(object):
             if sensor_key == 'sensor.camera.rgb':
                 camera_rgb_intrinsic = self.get_intrinsic_matrix(sensor)
                 self.sensors[sensor_key].update({'calibration': camera_rgb_intrinsic})
+
+            # Setup relative to camera matrix for lidar sensors
+            elif 'lidar' in sensor_key:
+                veh_cam_mat = self.sensors['sensor.camera.rgb']['transform'].get_inverse_matrix()
+                lidar_veh_mat = self.sensors[sensor_key]['transform'].get_matrix()
+                lidar_cam_mat = np.dot(veh_cam_mat, lidar_veh_mat)
+                self.sensors[sensor_key].update({'lidar_cam_mat': lidar_cam_mat})
 
             if args.vis_lidar:
                 # Setup open3d visualization for lidars
@@ -335,7 +342,7 @@ class CarlaGame(object):
 
         return dist_func(cur_pos, last_pos)
 
-    def _save_datapoints(self, datapoints, cam_calibration, rgb_image, point_clouds, lidar_heights, args):
+    def _save_datapoints(self, datapoints, cam_calibration, rgb_image, point_clouds, lidar_heights, lidar_cam_mats, args):
         # Determine whether to save files
         distance_driven = self._distance_since_last_recording()
         logging.debug("Distance driven since last recording: {}".format(distance_driven))
@@ -344,7 +351,7 @@ class CarlaGame(object):
             if has_driven_long_enough and datapoints:
                 self._update_agent_location()
                 # Save screen, lidar and kitti training labels together with calibration and groundplane files
-                self._save_training_files(datapoints, cam_calibration, point_clouds, rgb_image, lidar_heights, args)
+                self._save_training_files(datapoints, cam_calibration, point_clouds, rgb_image, lidar_heights, lidar_cam_mats, args)
                 self.captured_frame_no += 1
                 self._captured_frames_since_restart += 1
                 self._frames_since_last_capture = 0
@@ -390,7 +397,7 @@ class CarlaGame(object):
                     # We're negating the y to correclty visualize a world that matches
                     # what we see in Unreal since Open3D uses a right-handed coordinate system
                     lidar_raycast_points_o3d = np.copy(lidar_points)
-                    lidar_raycast_points_o3d[:, :1] = -lidar_raycast_points_o3d[:, :1]
+                    lidar_raycast_points_o3d[:, 1] = -lidar_raycast_points_o3d[:, 1]
                     lidar_point_list.points = o3d.utility.Vector3dVector(lidar_raycast_points_o3d[:, :3])
                     lidar_point_list.colors = o3d.utility.Vector3dVector(int_color)
 
@@ -421,21 +428,22 @@ class CarlaGame(object):
 
         return datapoints
 
-    def _save_training_files(self, datapoints, cam_calibration, point_clouds, rgb_image, lidar_heights, args):
+    def _save_training_files(self, datapoints, cam_calibration, point_clouds, rgb_image, lidar_heights, lidar_cam_mats, args):
         logging.info("Attempting to save at timer step {}, frame no: {}".format(
             self._timer.step, self.captured_frame_no))
 
-        for g_path, l_path, c_path, point_cloud, l_height in zip(args.groundplane_paths,
+        for g_path, l_path, c_path, point_cloud, l_height, lidar_cam_mat in zip(args.groundplane_paths,
                                                                  args.lidar_paths,
                                                                  args.calibration_paths,
                                                                  point_clouds,
-                                                                 lidar_heights):
+                                                                 lidar_heights,
+                                                                 lidar_cam_mats):
             groundplane_fname = g_path.format(self.captured_frame_no)
             lidar_fname = l_path.format(self.captured_frame_no)
             calib_filename = c_path.format(self.captured_frame_no)
             save_groundplanes(groundplane_fname, self.world.player.get_transform(), l_height)
             save_lidar_data(lidar_fname, point_cloud)
-            save_calibration_matrices(calib_filename, cam_calibration)
+            save_calibration_matrices(calib_filename, cam_calibration, lidar_cam_mat)
 
         kitti_fname = args.label_path.format(self.captured_frame_no)
         img_fname = args.image_path.format(self.captured_frame_no)
@@ -492,13 +500,14 @@ class CarlaGame(object):
                 points = np.reshape(points, (int(points.shape[0] / 4), 4))
                 points = np.copy(points)
 
+                # TODO blickfeld should be checked against 0.9.10 carla version
                 if 'blickfeld' in sensor_key:
                     # Swapping x and y axis in blickfeld lidar for correct visualization
-                    points[:, [0, 1]] = points[:, [1, 0]]
+                    # points[:, [0, 1]] = points[:, [1, 0]]
 
                     # To make coordinate system consistent with default ray_cast lidar we turn right-hand coordinate sys
                     # to left-hand for blickfeld
-                    points[:, 0] = -points[:, 0]
+                    # points[:, 0] = -points[:, 0]
 
                     # Looks like that the blickfeld produces values for x-axis beyond lidar range.
                     # We thus cut the points based on the lidar range.
@@ -593,19 +602,22 @@ class CarlaGame(object):
 
                     point_clouds = []
                     lidar_heights = []
+                    lidar_cam_mats = []
                     for key in processed_sensor_data.keys():
                         if 'lidar' in key:
                             point_cloud = processed_sensor_data[key]['points']
                             lidar_height = self.world.camera_manager.sensors[key]['transform'].location.z
+                            lidar_cam_mat = self.world.camera_manager.sensors[key]['lidar_cam_mat']
                             point_clouds.append(point_cloud)
                             lidar_heights.append(lidar_height)
+                            lidar_cam_mats.append(lidar_cam_mat)
 
                     rgb_image = processed_sensor_data['sensor.camera.rgb']['image']
                     self._save_datapoints(datapoints,
                                           self.world.camera_manager.sensors['sensor.camera.rgb']['calibration'],
                                           rgb_image,
                                           point_clouds,
-                                          lidar_heights, args)
+                                          lidar_heights, lidar_cam_mats, args)
 
                 if (args.autopilot == False):
                     # Set new destination when target has been reached
