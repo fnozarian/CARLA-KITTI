@@ -63,6 +63,16 @@ def proj_to_camera(pos_vector, extrinsic_mat):
     return transformed_3d_pos
 
 
+def crop_boxes_in_canvas(cam_bboxes):
+    neg_x_inds = np.where(cam_bboxes[:, 0] < 0)[0]
+    out_x_inds = np.where(cam_bboxes[:, 0] > WINDOW_WIDTH)[0]
+    neg_y_inds = np.where(cam_bboxes[:, 1] < 0)[0]
+    out_y_inds = np.where(cam_bboxes[:, 1] > WINDOW_HEIGHT)[0]
+    cam_bboxes[neg_x_inds, 0] = 0
+    cam_bboxes[out_x_inds, 0] = WINDOW_WIDTH
+    cam_bboxes[neg_y_inds, 1] = 0
+    cam_bboxes[out_y_inds, 1] = WINDOW_HEIGHT
+
 def point_in_canvas(pos):
     """Return true if point is in canvas"""
     if (pos[0] >= 0) and (pos[0] < WINDOW_HEIGHT) and (pos[1] >= 0) and (pos[1] < WINDOW_WIDTH):

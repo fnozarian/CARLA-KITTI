@@ -424,7 +424,13 @@ class CarlaGame(object):
         elif args.vis_boxes2d:
             draw_2d_bounding_boxes(display, boxes_2d)
 
-        # TODO Display agent rotation for checking dataset correctness
+        if args.vis_ry:
+            myfont = pygame.font.SysFont('Comic Sans MS', 30)
+            for datapoint in datapoints:
+                ry = np.degrees(datapoint.rotation_y)
+                textsurface = myfont.render('ry: {:.2f}'.format(np.round(ry)), False, (0, 0, 0))
+                bbox_top_right = (datapoint.bbox[2], datapoint.bbox[1])
+                display.blit(textsurface, bbox_top_right)
 
         return datapoints
 
@@ -698,6 +704,11 @@ def main():
         action='store_true',
         dest='vis_boxes2d',
         help='Whether or not to visualize 2D bounding boxes for agents.')
+    argparser.add_argument(
+        '--vis_ry',
+        action='store_true',
+        dest='vis_ry',
+        help='Whether or not to visualize rotation ry of agents around Y-axis.')
     argparser.add_argument(
         '--steps_between_recordings',
         default=10,

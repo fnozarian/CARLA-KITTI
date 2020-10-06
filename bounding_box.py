@@ -97,6 +97,9 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
         # Visualize midpoint for agents
         # draw_rect(image, (camera_refpoint[1], camera_refpoint[0]), 4)
 
+        # Crop vertices outside camera to image edges
+        crop_boxes_in_canvas(camera_bbox)
+
         bbox_2d = calc_projected_2d_bbox(camera_bbox)
 
         area = calc_bbox2d_area(bbox_2d)
@@ -104,7 +107,7 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
             logging.info("Filtered out bbox with too low area {}".format(area))
             return image, None, None
 
-        rotation_y = get_relative_rotation_y(agent, player_transform) % math.pi
+        rotation_y = get_relative_rotation_y(agent, player_transform)
 
         datapoint = KittiDescriptor()
         datapoint.set_type(obj_type)
@@ -123,7 +126,12 @@ def get_relative_rotation_y(agent, player_transform):
 
     rot_agent = agent.get_transform().rotation.yaw
     rot_vehicle = player_transform.rotation.yaw
-    return math.radians(rot_agent - rot_vehicle)
+    rel_angle = math.radians(rot_agent - rot_vehicle)
+    if rel_angle > math.pi:
+        rel_angle = rel_angle - 2 * math.pi
+    elif rel_angle < - math.pi:
+        rel_angle = rel_angle + 2 * math.pi
+    return rel_angle
 
 
 def transforms_from_agent(agent):
