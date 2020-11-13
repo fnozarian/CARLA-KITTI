@@ -108,6 +108,7 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
             return image, None, None
 
         rotation_y = get_relative_rotation_y(agent, player_transform)
+        alpha = get_alpha(agent, player_transform)
 
         datapoint = KittiDescriptor()
         datapoint.set_type(obj_type)
@@ -115,6 +116,7 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
         datapoint.set_3d_object_dimensions(ext)
         datapoint.set_3d_object_location(sensor_refpoint)
         datapoint.set_rotation_y(rotation_y)
+        datapoint.set_alpha(alpha)
         return image, datapoint, camera_bbox
     else:
         return image, None, None
@@ -133,6 +135,27 @@ def get_relative_rotation_y(agent, player_transform):
         rel_angle = rel_angle + 2 * math.pi
     return rel_angle
 
+def get_alpha(agent, player_transform):
+
+    #heading direction of the vehicle
+    forward_vector = player_transform.rotation.get_forward_vector()
+    forward_vector_numpy = np.array([forward_vector.x, forward_vector.y, forward_vector.z])
+    #location of vehicle
+    vehicle_location = player_transform.location
+    #location of agent
+    agent_location = agent.get_transform().location
+    #vector from vehicle to agent
+    target_vector = agent_location - vehicle_location
+    target_vector_numpy = np.array([target_vector.x, target_vector.y, target_vector.z])
+    norm_target = np.linalg.norm(target_vector_numpy)
+
+    #check https://github.com/traveller59/second.pytorch/issues/98
+    #and https://arxiv.org/pdf/1904.12681.pdf (supplementary material), here theta = theta ray
+    theta = math.radians(math.acos(np.dot(forward_vector_numpy, target_vector_numpy) / norm_target)) % math.pi
+    rotation_y = get_relative_rotation_y(agent, player_transform)
+    alpha = (rotation_y - theta)
+
+    return alpha
 
 def transforms_from_agent(agent):
     """ Returns the KITTI object type and transforms, locations and extension of the given agent """
