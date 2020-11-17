@@ -128,7 +128,8 @@ def get_relative_rotation_y(agent, player_transform):
 
     rot_agent = agent.get_transform().rotation.yaw
     rot_vehicle = player_transform.rotation.yaw
-    rel_angle = math.radians(rot_agent - rot_vehicle)
+    #rotate by -90 to match kitti
+    rel_angle = math.radians(rot_agent - rot_vehicle - 90)
     if rel_angle > math.pi:
         rel_angle = rel_angle - 2 * math.pi
     elif rel_angle < - math.pi:
@@ -151,9 +152,19 @@ def get_alpha(agent, player_transform):
 
     #check https://github.com/traveller59/second.pytorch/issues/98
     #and https://arxiv.org/pdf/1904.12681.pdf (supplementary material), here theta = theta ray
-    theta = math.radians(math.acos(np.dot(forward_vector_numpy, target_vector_numpy) / norm_target)) % math.pi
-    rotation_y = get_relative_rotation_y(agent, player_transform)
-    alpha = (rotation_y - theta)
+    theta = math.degrees(math.acos(np.dot(forward_vector_numpy, target_vector_numpy) / norm_target))
+
+    rot_agent = agent.get_transform().rotation.yaw
+    rot_vehicle = player_transform.rotation.yaw
+    # rotate by -90 to match kitti
+    rel_angle = rot_agent - rot_vehicle - 90
+
+    alpha = math.radians(rel_angle - theta)
+
+    if alpha > math.pi:
+        alpha = alpha - 2*math.pi
+    elif alpha < - math.pi:
+        alpha = alpha + 2*math.pi
 
     return alpha
 
