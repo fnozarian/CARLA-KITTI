@@ -9,6 +9,7 @@ import numpy as np
 import logging
 import time
 
+
 import carla
 from carla import ColorConverter as cc
 from carla import Transform
@@ -374,7 +375,7 @@ class CarlaGame(object):
         # Retrieve and draw datapoints on rgb image
         datapoint_gen_time = time.time()
         image, datapoints, bounding_boxes, boxes_2d = self._generate_datapoints(image, depth_map, args)
-        logging.info("datapoint generation time: ", (time.time() - datapoint_gen_time) * 1000.)
+        #logging.info("datapoint generation time: ", (time.time() - datapoint_gen_time) * 1000.)
         # Display RGB Image
         surface = pygame.surfarray.make_surface(image.swapaxes(0, 1))
         display.blit(surface, (0, 0))
@@ -429,6 +430,14 @@ class CarlaGame(object):
             for datapoint in datapoints:
                 ry = np.degrees(datapoint.rotation_y)
                 textsurface = myfont.render('ry: {:.2f}'.format(np.round(ry)), False, (0, 0, 0))
+                bbox_top_right = (datapoint.bbox[2], datapoint.bbox[1])
+                display.blit(textsurface, bbox_top_right)
+                
+        if args.vis_alpha:
+            myfont = pygame.font.SysFont('Comic Sans MS', 30)
+            for datapoint in datapoints:
+                alpha = np.degrees(datapoint.alpha)
+                textsurface = myfont.render('alpha: {:.2f}'.format(np.round(alpha)), False, (0, 0, 0))
                 bbox_top_right = (datapoint.bbox[2], datapoint.bbox[1])
                 display.blit(textsurface, bbox_top_right)
 
@@ -709,6 +718,11 @@ def main():
         action='store_true',
         dest='vis_ry',
         help='Whether or not to visualize rotation ry of agents around Y-axis.')
+    argparser.add_argument(
+        '--vis_alpha',
+        action='store_true',
+        dest='vis_alpha',
+        help='Whether or not to visualize alpha.')
     argparser.add_argument(
         '--steps_between_recordings',
         default=10,
