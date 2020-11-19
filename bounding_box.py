@@ -96,7 +96,8 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
         # TODO I checked for pedestrians and it works. Test for vehicles too!
         # Visualize midpoint for agents
         # draw_rect(image, (camera_refpoint[1], camera_refpoint[0]), 4)
-
+        
+        uncropped_bbox_2d = calc_projected_2d_bbox(camera_bbox)
         # Crop vertices outside camera to image edges
         crop_boxes_in_canvas(camera_bbox)
 
@@ -109,7 +110,7 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
 
         rotation_y = get_relative_rotation_y(agent, player_transform)
         alpha = get_alpha(agent, player_transform)
-
+        truncation = calculate_truncation(uncropped_bbox_2d, bbox_2d)
         datapoint = KittiDescriptor()
         datapoint.set_type(obj_type)
         datapoint.set_bbox(bbox_2d)
@@ -117,10 +118,19 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
         datapoint.set_3d_object_location(sensor_refpoint)
         datapoint.set_rotation_y(rotation_y)
         datapoint.set_alpha(alpha)
+        datapoint.set_truncated(truncation)
         return image, datapoint, camera_bbox
     else:
         return image, None, None
 
+
+def calculate_truncation(uncropped_bbox, cropped_bbox):
+    "Calculate how much of the object’s 2D uncropped bounding box is outside the image boundary"
+
+    area_cropped = calc_bbox2d_area(cropped_bbox)
+    area_uncropped = calc_bbox2d_area(uncropped_bbox)
+    truncation = 1.0 - float(area_cropped / area_uncropped)
+    return truncation
 
 def get_relative_rotation_y(agent, player_transform):
     """ Returns the relative rotation of the agent to the camera in yaw
