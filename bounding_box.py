@@ -96,8 +96,8 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
         # TODO I checked for pedestrians and it works. Test for vehicles too!
         # Visualize midpoint for agents
         # draw_rect(image, (camera_refpoint[1], camera_refpoint[0]), 4)
-        
         uncropped_bbox_2d = calc_projected_2d_bbox(camera_bbox)
+        
         # Crop vertices outside camera to image edges
         crop_boxes_in_canvas(camera_bbox)
 
@@ -108,6 +108,7 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
             logging.info("Filtered out bbox with too low area {}".format(area))
             return image, None, None
 
+        occlusion = calculate_occlusion(camera_bbox, agent, depth_map)
         rotation_y = get_relative_rotation_y(agent, player_transform)
         alpha = get_alpha(agent, player_transform)
         truncation = calculate_truncation(uncropped_bbox_2d, bbox_2d)
@@ -119,10 +120,38 @@ def create_kitti_datapoint(agent, camera, cam_calibration, image, depth_map, pla
         datapoint.set_rotation_y(rotation_y)
         datapoint.set_alpha(alpha)
         datapoint.set_truncated(truncation)
+        datapoint.set_occlusion(occlusion)
+
         return image, datapoint, camera_bbox
     else:
         return image, None, None
 
+
+def calculate_occlusion(bbox, agent, depth_map):
+    """Calculate the occlusion value of a 2D bounding box.
+    Iterate through each point (pixel) in the bounding box and declare it occluded only
+    if the 4 surroinding points (pixels) are closer to the camera (by using the help of depth map)
+    than the actual distance to the middle of the 3D bounding boxe and some margin (the extent of the object)
+    """
+    bbox_3d_mid = np.mean(bbox[:,2])
+    min_x, min_y, max_x, max_y = calc_projected_2d_bbox(bbox)
+    height, width, length = agent.bounding_box.extent.z, agent.bounding_box.extent.x, agent.bounding_box.extent.y
+
+    #depth_margin should depend on the rotation of the object but this solution works fine
+    depth_margin = np.max([2 * width, 2 * length])
+    is_occluded = []
+
+    for x in range(int(min_x), int(max_x)):
+        for y in range(int(min_y), int(max_y)):
+            is_occluded.append(point_is_occluded(
+                (y, x), bbox_3d_mid - depth_margin, depth_map))
+
+    occlusion = ((float(np.sum(is_occluded))) / ((max_x-min_x) * (max_y-min_y)))
+
+    #discretize the 0–1 occlusion value into KITTI’s {0,1,2,3} labels by equally dividing the interval into 4 parts
+    occlusion = np.digitize(occlusion, bins=[0.25, 0.50, 0.75])
+
+    return occlusion
 
 def calculate_truncation(uncropped_bbox, cropped_bbox):
     "Calculate how much of the object’s 2D uncropped bounding box is outside the image boundary"
