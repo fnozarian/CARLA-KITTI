@@ -189,9 +189,16 @@ def get_alpha(agent, player_transform):
     target_vector_numpy = np.array([target_vector.x, target_vector.y, target_vector.z])
     norm_target = np.linalg.norm(target_vector_numpy)
 
-    #check https://github.com/traveller59/second.pytorch/issues/98
-    #and https://arxiv.org/pdf/1904.12681.pdf (supplementary material), here theta = theta ray
-    theta = math.degrees(math.acos(np.dot(forward_vector_numpy, target_vector_numpy) / norm_target))
+    #fix rounding errors of dot product (can only range between -1 and 1 for normalized vectors)
+    dot_prod = np.dot(forward_vector_numpy, target_vector_numpy) / norm_target
+    if dot_prod > 1:
+        dot_prod = 1.0
+    elif dot_prod < -1:
+        dot_prod = -1.0
+
+    # check https://github.com/traveller59/second.pytorch/issues/98
+    # and https://arxiv.org/pdf/1904.12681.pdf (supplementary material), here theta = theta ray
+    theta = math.degrees(math.acos(dot_prod))
 
     rot_agent = agent.get_transform().rotation.yaw
     rot_vehicle = player_transform.rotation.yaw
