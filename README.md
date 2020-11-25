@@ -52,8 +52,8 @@ $ pip install -U pygame==2.0
 We also need some additional but necessary packages:
 
 ```bash
-$ conda install -c conda-forge numpy matplotlib opencv
-$ conda install -c open3d-admin open3d
+$ conda install -c conda-forge numpy matplotlib opencv scikit-learn scipy
+$ conda install -c open3d-admin open3d pyyaml addict pandas plyfile networkx
 ```
 
 
