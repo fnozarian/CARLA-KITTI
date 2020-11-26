@@ -112,14 +112,17 @@ def save_calibration_matrices(filename, intrinsic_mat, lidar_cam_mat):
     P0 = np.ravel(P0, order=ravel_mode)
     R0 = np.identity(3)
 
-    # TODO Remove the bellow hardcoded transformation and write it based on the lidar_cam_mat matrix.
+    # TODO Remove the bellow hardcoded rotation matrix and write it based on the lidar_cam_mat matrix.
+    # Currently it is assumed that the lidar has the same rotation as the camera but can vary in location (see below)
     #  We need to convert left-hand camera frame to right-hand kitti camera frame.
 
-    TR_velodyne = np.array([[0, -1, 0],
+    R_velodyne = np.array([[0, -1, 0],
                             [0, 0, -1],
                             [1, 0, 0]])
-    # Add translation vector from velo to camera. This is 0 because the position of camera and lidar is equal in our configuration.
-    TR_velodyne = np.column_stack((TR_velodyne, np.array([0, 0, 0])))
+
+    # Add translation vector from velo to camera.
+    T_velodyne = np.array([lidar_cam_mat[1, 3], -lidar_cam_mat[2, 3], lidar_cam_mat[0, 3]])
+    TR_velodyne = np.column_stack((R_velodyne, T_velodyne))
     TR_imu_to_velo = np.identity(3)
     TR_imu_to_velo = np.column_stack((TR_imu_to_velo, np.array([0, 0, 0])))
 
