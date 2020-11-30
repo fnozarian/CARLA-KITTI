@@ -71,7 +71,7 @@ class KittiDescriptor:
         # y: to the right of the vehicle
         # z: up (direction of car roof)
         # However, Kitti expects height, width and length (z, y, x):
-        height, width, length = bbox_extent.z, bbox_extent.x, bbox_extent.y
+        height, width, length = bbox_extent.z, bbox_extent.y, bbox_extent.x
         # Since Carla gives us bbox extent, which is a half-box, multiply all by two
         self.extent = (height, width, length)
         self.dimensions = "{} {} {}".format(2*height, 2*width, 2*length)
