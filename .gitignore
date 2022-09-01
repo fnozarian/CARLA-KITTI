@@ -1,2 +1,5 @@
 /_out/
 /.idea/
+/data/
+/dataset_reports/
+/.ipynb_checkpoints/
