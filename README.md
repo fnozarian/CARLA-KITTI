@@ -1,6 +1,6 @@
 ## CARLA-Kitti Setup & Installation Guide
 
-A step-by-step guide for installing CARLA-KITTI data collector to generate synthetic data and export it to KITTI data format.
+A step-by-step guide for installing CARLA-KITTI data collector to generate synthetic data and export it to a KITTI data format.
 
 Some of the features of the "CARLA-KITTI data collector" include:
 
