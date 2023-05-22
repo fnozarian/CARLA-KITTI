@@ -636,13 +636,13 @@ class CarlaGame(object):
 
                 if (args.autopilot == False):
                     # Set new destination when target has been reached
-                    if len(self.agent.get_local_planner().waypoints_queue) < self.num_min_waypoints and args.loop:
+                    if len(self.agent.get_local_planner()._waypoints_queue) < self.num_min_waypoints and args.loop:
                         self.agent.reroute(self.spawn_points)
                         self.tot_target_reached += 1
                         self.world.hud.notification("The target has been reached " +
                                                str(self.tot_target_reached) + " times.", seconds=4.0)
 
-                    elif len(self.agent.get_local_planner().waypoints_queue) == 0 and not args.loop:
+                    elif len(self.agent.get_local_planner()._waypoints_queue) == 0 and not args.loop:
                         print("Target reached, mission accomplished...")
                         break
 
