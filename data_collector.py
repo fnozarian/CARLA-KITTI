@@ -789,7 +789,7 @@ def main():
 
     # TODO this is a workaround for spawning pedestrians and vehicles. In future should be replaced by
     #  scenario runner configs
-    spawn_npc_path = os.path.join(carla_root, 'PythonAPI', 'examples', 'spawn_npc.py')
+    spawn_npc_path = os.path.join(carla_root, 'PythonAPI', 'examples', 'generate_traffic.py')
 
     def target(**kwargs):
         process = subprocess.Popen([spawn_npc_path, '-w 200'], **kwargs)
