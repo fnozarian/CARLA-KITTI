@@ -1,0 +1,128 @@
+# Compare Camera Matrix Code:
+
+## Code 01
+
+### Intrinsic
+
+    WINDOW_WIDTH = 1248
+    WINDOW_HEIGHT = 384 
+    camera0 = sensor.Camera('CameraRGB')
+    camera0.set_image_size(WINDOW_WIDTH, WINDOW_HEIGHT)
+    camera0.set_position(0, 0.0, CAMERA_HEIGHT_POS)
+    camera0.set_rotation(0.0, 0.0, 0.0)
+    settings.add_sensor(camera0)
+    # (Intrinsic) K Matrix
+    # | f 0 Cu
+    # | 0 f Cv
+    # | 0 0 1
+    # (Cu, Cv) is center of image
+    k = np.identity(3)
+    k[0, 2] = WINDOW_WIDTH_HALF
+    k[1, 2] = WINDOW_HEIGHT_HALF
+    f = WINDOW_WIDTH / \
+        (2.0 * math.tan(90.0 * math.pi / 360.0))
+    k[0, 0] = k[1, 1] = f
+
+### Extrinsic
+
+    camera_to_car_transform = camera0.get_unreal_transform()
+    # (Extrinsic) Rt Matrix
+    # (Camera) local 3d to world 3d.
+    # Get the transform from the player protobuf transformation.
+    world_transform = Transform(
+        measurements.player_measurements.transform
+    )
+    # Compute the final transformation matrix.
+    self._extrinsic = world_transform * self._camera_to_car_transform
+
+### Calib File Write
+
+def save_calibration_matrices(filename, intrinsic_mat, extrinsic_mat):
+    """ Saves the calibration matrices to a file.
+        AVOD (and KITTI) refers to P as P=K*[R;t], so we will just store P.
+        The resulting file will contain:
+        3x4    p0-p3      Camera P matrix. Contains extrinsic
+                          and intrinsic parameters. (P=K*[R;t])
+        3x3    r0_rect    Rectification matrix, required to transform points
+                          from velodyne to camera coordinate frame.
+        3x4    tr_velodyne_to_cam    Used to transform from velodyne to cam
+                                     coordinate frame according to:
+                                     Point_Camera = P_cam * R0_rect *
+                                                    Tr_velo_to_cam *
+                                                    Point_Velodyne.
+        3x4    tr_imu_to_velo        Used to transform from imu to velodyne coordinate frame. This is not needed since we do not export
+                                     imu data.
+    """
+    # KITTI format demands that we flatten in row-major order
+    ravel_mode = 'C'
+    P0 = intrinsic_mat
+    P0 = np.column_stack((P0, np.array([0, 0, 0])))
+    P0 = np.ravel(P0, order=ravel_mode)
+    R0 = np.identity(3)
+    TR_velodyne = np.array([[0, -1, 0],
+                            [0, 0, -1],
+                            [1, 0, 0]])
+    # Add translation vector from velo to camera. This is 0 because the position of camera and lidar is equal in our configuration.
+    TR_velodyne = np.column_stack((TR_velodyne, np.array([0, 0, 0])))
+    TR_imu_to_velo = np.identity(3)
+    TR_imu_to_velo = np.column_stack((TR_imu_to_velo, np.array([0, 0, 0])))
+
+    def write_flat(f, name, arr):
+        f.write("{}: {}\n".format(name, ' '.join(
+            map(str, arr.flatten(ravel_mode).squeeze()))))
+
+    # All matrices are written on a line with spacing
+    with open(filename, 'w') as f:
+        for i in range(4):  # Avod expects all 4 P-matrices even though we only use the first
+            write_flat(f, "P" + str(i), P0)
+        write_flat(f, "R0_rect", R0)
+        write_flat(f, "Tr_velo_to_cam", TR_velodyne)
+        write_flat(f, "TR_imu_to_velo", TR_imu_to_velo)
+    logging.info("Wrote all calibration matrices to %s", filename)
+
+### Kitti Viz
+
+    #### Other Transforms
+        lidar_to_car_transform = lidar.get_transform(
+        ) * Transform(Rotation(yaw=90), Scale(z=-1))
+    
+
+
+            # Draw lidar
+            # Camera coordinate system is left, up, forwards
+            if VISUALIZE_LIDAR:
+                # Calculation to shift bboxes relative to pitch and roll of player
+                rotation = self._measurements.player_measurements.transform.rotation
+                pitch, roll, yaw = rotation.pitch, rotation.roll, rotation.yaw
+                # Since measurements are in degrees, convert to radians
+
+                pitch = degrees_to_radians(pitch)
+                roll = degrees_to_radians(roll)
+                yaw = degrees_to_radians(yaw)
+                print('pitch: ', pitch)
+                print('roll: ', roll)
+                print('yaw: ', yaw)
+
+                # Rotation matrix for pitch
+                rotP = np.array([[cos(pitch),            0,              sin(pitch)],
+                                 [0,            1,     0],
+                                 [-sin(pitch),            0,     cos(pitch)]])
+                # Rotation matrix for roll
+                rotR = np.array([[1,            0,              0],
+                                 [0,            cos(roll),     -sin(roll)],
+                                 [0,            sin(roll),     cos(roll)]])
+
+                # combined rotation matrix, must be in order roll, pitch, yaw
+                rotRP = np.matmul(rotR, rotP)
+                # Take the points from the point cloud and transform to car space
+                point_cloud = np.array(self._lidar_to_car_transform.transform_points(
+                    self._lidar_measurement.data))
+                point_cloud[:, 2] -= LIDAR_HEIGHT_POS
+                point_cloud = np.matmul(rotRP, point_cloud.T).T
+                # print(self._lidar_to_car_transform.matrix)
+                # print(self._camera_to_car_transform.matrix)
+                # Transform to camera space by the inverse of camera_to_car transform
+                point_cloud_cam = self._camera_to_car_transform.inverse().transform_points(point_cloud)
+                point_cloud_cam[:, 1] += LIDAR_HEIGHT_POS
+                image = lidar_utils.project_point_cloud(
+                    image, point_cloud_cam, self._intrinsic, 1)
